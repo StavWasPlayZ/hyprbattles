@@ -1,4 +1,4 @@
-# hyprbattles
+# hyprbattles / Hyprland Pokemon Battles
 
 Swap one window with another and, one time in four - the two of them settle it in a turn-based fight instead
 of just handling it like adults.
