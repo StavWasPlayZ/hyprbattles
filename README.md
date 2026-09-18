@@ -67,7 +67,7 @@ omarchy restart shell
 Then add the toggle to `~/.config/omarchy/extensions/omarchy-menu.jsonc`:
 
 ```jsonc
-"trigger.toggle.window-battles": {"icon":"\udb81\udf87","label":"Window Battles","aliases":["battles","hyprbattles","pokemon"],"when":"test -x $HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.pokemon-battles/bin/battles-ctl","checked":"[ \"$($HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.pokemon-battles/bin/battles-ctl enabled)\" = true ]","action":"$HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.pokemon-battles/bin/battles-ctl toggle"},
+"trigger.toggle.window-battles": {"icon":"\udb81\udf87","label":"Window Battles","aliases":["battles","hyprbattles","pokemon"],"when":"test -x $HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/battles-ctl","checked":"[ \"$($HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/battles-ctl enabled)\" = true ]","action":"$HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/battles-ctl toggle"},
 ```
 
 It lands under **Trigger -> Toggle**, beside the other switches, with a tick

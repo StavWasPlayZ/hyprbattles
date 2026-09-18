@@ -362,7 +362,7 @@ in the same three columns:
 
 ```
 mode       auto
-generated  .../plugins/dev.cstav.omarchy.plugin.pokemon-battles/assets
+generated  .../plugins/dev.cstav.omarchy.plugin.hyprbattles/assets
 custom     /home/you/.config/omarchy/hyprbattles/assets
 
 battle-theme.wav    custom     /home/you/.config/omarchy/.../battle-theme.wav
