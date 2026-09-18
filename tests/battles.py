@@ -592,20 +592,26 @@ class FakeSound:
 
 
 class FakePad:
-    def __init__(self):
+    def __init__(self, grabs=True):
         self.grabbed = False
         self.released = 0
         self.socket = None
         self.held = False
+        self.buzzes = []
+        self._grabs = grabs
 
     def grab(self, now):
-        self.grabbed = True
-        self.held = True
-        return True
+        self.grabbed = self._grabs
+        self.held = self._grabs
+        return self._grabs
 
     def release(self):
         self.released += 1
         self.held = False
+
+    def rumble(self, strong, weak, milliseconds):
+        self.buzzes.append((strong, weak, milliseconds))
+        return True
 
 
 class CollisionGate(unittest.TestCase):
@@ -718,6 +724,50 @@ class CollisionGate(unittest.TestCase):
         self.assertIsNotNone(bd.Daemon.window_by_address("0x601af8", clients))
         self.assertIsNotNone(bd.Daemon.window_by_address("0xDEAD", clients))
         self.assertIsNone(bd.Daemon.window_by_address("0xmissing", clients))
+
+
+class EncounterRumble(unittest.TestCase):
+    """A battle opening should be felt, not just seen. The motors live in the
+    gamepad plugin, so this is an ask over its socket rather than a write."""
+
+    def daemon(self, pad):
+        daemon = bd.Daemon.__new__(bd.Daemon)
+        daemon.sound = FakeSound()
+        daemon.effects = FakeSound()
+        daemon.pad = pad
+        daemon.battle = None
+        daemon.source = None
+        daemon.published = None
+        daemon.publish = lambda: None
+        daemon.pantry = None
+        daemon.bar_hidden = False
+        daemon.set_bar = lambda visible: None
+        daemon.monitor_name = lambda client: "DP-4"
+        daemon.hypr = type("Q", (), {"query": staticmethod(
+            lambda what: [window("0x10", "foot"), window("0x20", "firefox")])})()
+        return daemon
+
+    def test_a_battle_starting_asks_for_a_second_at_full(self):
+        pad = FakePad()
+        daemon = self.daemon(pad)
+        daemon.start("0x10", "0x20", "left", 0.0, source="pad")
+        self.assertIsNotNone(daemon.battle)
+        self.assertEqual(pad.buzzes, [(1.0, 1.0, bd.ENCOUNTER_RUMBLE_MS)])
+
+    def test_it_is_asked_for_even_when_the_lease_is_refused(self):
+        # A keyboard battle, or a pad lent elsewhere: the buzz is harmless and
+        # the controller may well still be in reach.
+        pad = FakePad(grabs=False)
+        daemon = self.daemon(pad)
+        daemon.start("0x10", "0x20", "left", 0.0, source="keyboard")
+        self.assertEqual(pad.buzzes, [(1.0, 1.0, bd.ENCOUNTER_RUMBLE_MS)])
+
+    def test_nothing_buzzes_when_the_battle_cannot_start(self):
+        pad = FakePad()
+        daemon = self.daemon(pad)
+        daemon.start("0x10", "0xmissing", "left", 0.0, source="pad")
+        self.assertIsNone(daemon.battle)
+        self.assertEqual(pad.buzzes, [])
 
 
 class BattleInput(unittest.TestCase):

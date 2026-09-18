@@ -81,6 +81,9 @@ PAD_COLLISION_EVENT = "dev.cstav.omarchy.plugin.hyprscroll2d-gamepad:collision"
 COLLISION_DEDUP = 0.5
 
 BATTLE_COOLDOWN = 6.0       # quiet period after one, so they do not stack
+# A wild window appeared: both motors flat out for a second. The gamepad
+# daemon caps what a client may ask for, so this is close to that ceiling.
+ENCOUNTER_RUMBLE_MS = 1000
 RENEW_INTERVAL = 1.5        # lease renewals, comfortably inside the pad's TTL
 CLIENT_NAME = "pokemon-battles"
 
@@ -295,6 +298,12 @@ class PadLease:
             # an error: this plugin simply has no controller to play with.
             return False
 
+    def rumble(self, strong, weak, milliseconds):
+        """Ask the gamepad daemon for a buzz. The motors live on its side of
+        the socket, and no lease is needed to ask - see its docs/PAD-API.md.
+        Silent when that plugin is not installed, like everything else here."""
+        return self.send("rumble %.2f %.2f %d" % (strong, weak, milliseconds))
+
     def grab(self, now):
         if self.send("grab " + self.name):
             self.held = True
@@ -469,6 +478,11 @@ class Daemon:
         # either hand is better than one tied to whichever you began with. A
         # failed grab simply means keyboard only.
         self.pad.grab(now)
+        # A second of both motors flat out, the way an encounter should land.
+        # It goes out whether or not the grab succeeded: the pad may be lent
+        # elsewhere or the battle may have been started from the keyboard, and
+        # a buzz is harmless either way.
+        self.pad.rumble(1.0, 1.0, ENCOUNTER_RUMBLE_MS)
         # The bar belongs to the desktop, and for the next minute this is not
         # the desktop. Left alone if the user already had it hidden.
         self.bar_hidden = not os.path.exists(BAR_FLAG_PATH)

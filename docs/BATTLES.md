@@ -37,10 +37,18 @@ The Hyprscroll2D layout plugin is what makes windows collide at all, so
 without it there are simply no battles. Nothing errors; moves just swap
 windows the way they always did.
 
-**The gamepad plugin is optional.** It adds a controller to play with, and the
-narrower pad-only collision event - nothing else. Without it, battles still
-trigger from keyboard moves and are still fully playable, because the overlay
-has the keyboard regardless.
+**The gamepad plugin is optional.** It adds a controller to play with, the
+narrower pad-only collision event, and a second of both motors flat out as a
+battle opens - nothing else. Without it, battles still trigger from keyboard
+moves and are still fully playable, because the overlay has the keyboard
+regardless.
+
+The buzz is asked for over that plugin's control socket
+(`rumble 1.00 1.00 1000`, see its `docs/PAD-API.md`) rather than written to
+the device: the pad is its to drive, and it caps what a client may ask for.
+It goes out even when the lease was refused, because the controller may be
+sitting right there whichever hand started the fight, and a buzz costs
+nothing when it is not.
 
 ## The trigger path
 
