@@ -38,6 +38,7 @@ import time
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PLUGIN_ROOT, "lib"))
+import battle_assets                                       # noqa: E402
 import battle_rules as rules                                # noqa: E402
 import pantry                                              # noqa: E402
 
@@ -61,7 +62,10 @@ DISABLED_FLAG = os.path.join(STATE_HOME, "hyprscroll2d", "battles-disabled")
 # stops the same 512 MiB being fed to a creature over and over.
 LEDGER_PATH = os.path.join(STATE_HOME, "hyprscroll2d", "pantry.json")
 BAR_FLAG_PATH = os.path.join(STATE_HOME, "omarchy", "toggles", "bar-off")
-ASSETS = os.path.join(PLUGIN_ROOT, "assets")
+# What ships. A user's own files live outside the checkout and win or lose
+# per name according to the assets mode; lib/battle_assets.py is the whole of
+# that decision, and `battles-ctl assets` prints what it came to.
+ASSETS = battle_assets.GENERATED
 
 # What the layout plugin posts whenever a move swaps two windows instead of
 # stepping into an empty cell, whatever asked for the move. This is the
@@ -158,9 +162,19 @@ class Sound:
     refuse a battle.
     """
 
-    def __init__(self, assets=ASSETS):
-        self.assets = assets
+    def __init__(self, assets=None, custom=None):
+        # Two directories, not one: what shipped, and whatever the user put in
+        # their config. Which of the two a given name comes from is decided
+        # per play, so `battles-ctl assets custom` takes effect on the next
+        # sound rather than on the next shell restart.
+        self.assets = ASSETS if assets is None else assets
+        self.custom = battle_assets.custom_dir() if custom is None else custom
         self.process = None
+
+    def resolve(self, name):
+        """The file this name plays from, or None if nothing is there."""
+        return battle_assets.resolve(name, generated=self.assets,
+                                     custom=self.custom)
 
     @staticmethod
     def command(path, loop):
@@ -183,8 +197,8 @@ class Sound:
 
     def play(self, name, loop=False):
         self.stop()
-        path = os.path.join(self.assets, name)
-        if not os.path.exists(path):
+        path = self.resolve(name)
+        if path is None:
             return
         argv = self.command(path, loop)
         if not argv:
@@ -205,13 +219,16 @@ class Sound:
         """Kill players left over by an earlier daemon.
 
         The shell restarts this on every reload, and a SIGKILL skips shutdown
-        entirely. Matching on our own assets directory keeps this to players
-        we started.
+        entirely. Matching on our own assets directories keeps this to players
+        we started - both of them, because the file a player was given may
+        have come from either.
         """
         try:
-            subprocess.run(["pkill", "-f", os.path.join(self.assets, "battle-")],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=2)
+            for directory in (self.assets, self.custom):
+                subprocess.run(["pkill", "-f",
+                                os.path.join(directory, "battle-")],
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=2)
         except (OSError, subprocess.SubprocessError):
             pass
 
@@ -540,9 +557,10 @@ class Daemon:
     def sound_for(self, fight):
         """Whatever the last change to the battle should sound like.
 
-        Assets are played through Sound by name. If an asset-resolution helper
-        lands (generated versus custom), these calls should go through it
-        rather than naming files here.
+        Sounds are asked for by name and never by path: Sound is what turns a
+        name into a file, and lib/battle_assets.py is what decides whether
+        that file is the generated one or the user's own. Nothing here has to
+        know which, which is the point.
         """
         if fight.phase == "over" and fight.result in ("win", "loss"):
             if fight.result == "win":

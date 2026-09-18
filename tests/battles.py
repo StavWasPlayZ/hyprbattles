@@ -12,9 +12,11 @@ What is not covered here is what cannot be: the forwarded controller events
 themselves, which need the gamepad plugin running and a pad plugged in.
 """
 
+import array
 import importlib.machinery
 import importlib.util
 import json
+import math
 import os
 import random
 import re
@@ -22,10 +24,12 @@ import shutil
 import sys
 import tempfile
 import unittest
+import wave
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
 
+import battle_assets as assets                                # noqa: E402
 import battle_rules as battles                                # noqa: E402
 import pantry                                                 # noqa: E402
 
@@ -953,8 +957,11 @@ class TheMenuRow(unittest.TestCase):
         self.ctl.nudge()
 
     def test_the_offline_verbs_are_the_ones_that_need_no_daemon(self):
+        # `assets` is here too: which file a sound comes from is a setting and
+        # a pair of directories, so it can be read and changed with the shell
+        # down, exactly like the on/off flag.
         self.assertEqual(set(self.ctl.OFFLINE),
-                         {"enabled", "on", "off", "toggle"})
+                         {"enabled", "on", "off", "toggle", "assets"})
         for verb in self.ctl.OFFLINE:
             self.assertIn(verb, self.ctl.COMMANDS)
 
@@ -1446,7 +1453,7 @@ class Music(unittest.TestCase):
         self.assertIn("/tmp/x.wav", argv)
 
     def test_a_missing_file_plays_nothing(self):
-        sound = bd.Sound(assets="/nonexistent")
+        sound = bd.Sound(assets="/nonexistent", custom="/nonexistent-too")
         sound.play("battle-theme.wav", loop=True)
         self.assertIsNone(sound.process)
         sound.stop()          # must be safe with nothing playing
@@ -1456,10 +1463,194 @@ class Music(unittest.TestCase):
         with open(os.path.join(ROOT, "bin", "battles")) as handle:
             source = handle.read()
         for name in re.findall(r'"(battle-[a-z]+\.wav)"', source):
-            if name == "battle-theme.wav":
-                continue    # supplied locally, deliberately not committed
             self.assertTrue(os.path.exists(os.path.join(ROOT, "assets", name)),
                             name)
+
+    def test_the_daemon_only_asks_for_names_the_generator_makes(self):
+        # Three hand-written lists in three files. If they drift, a sound
+        # either plays from nowhere or goes unaccounted for in `assets`.
+        with open(os.path.join(ROOT, "bin", "battles")) as handle:
+            played = set(re.findall(r'"(battle-[a-z]+\.wav)"', handle.read()))
+        with open(os.path.join(ROOT, "bin", "make-battle-audio")) as handle:
+            made = set(re.findall(r'"(battle-[a-z]+\.wav)"', handle.read()))
+        self.assertTrue(played)
+        self.assertEqual(played - made, set())
+        self.assertEqual(played - set(assets.SOUNDS), set())
+
+
+class Assets(unittest.TestCase):
+    """Which of the two directories a sound comes out of.
+
+    The resolution order is the whole of the generated-versus-custom feature,
+    so it runs against directories made here rather than against whatever
+    happens to be in this machine's config.
+    """
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="battle-assets-")
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.generated = os.path.join(self.root, "generated")
+        self.custom = os.path.join(self.root, "custom")
+        os.makedirs(self.generated)
+        os.makedirs(self.custom)
+        for name in assets.SOUNDS:
+            self.put(self.generated, name)
+
+    def put(self, directory, name, body=b"RIFF"):
+        path = os.path.join(directory, name)
+        with open(path, "wb") as handle:
+            handle.write(body)
+        return path
+
+    def resolve(self, name, which):
+        return assets.resolve(name, which, generated=self.generated,
+                              custom=self.custom, environ={})
+
+    def test_auto_takes_a_custom_file_when_there_is_one(self):
+        mine = self.put(self.custom, "battle-theme.wav")
+        self.assertEqual(self.resolve("battle-theme.wav", "auto"), mine)
+
+    def test_auto_falls_back_per_file_and_not_per_set(self):
+        # Replacing only the theme has to leave the rest alone: it is the
+        # state almost everyone who replaces anything ends up in.
+        self.put(self.custom, "battle-theme.wav")
+        rows = dict((name, source) for name, _, source in assets.resolution(
+            "auto", self.generated, self.custom, environ={}))
+        self.assertEqual(rows["battle-theme.wav"], "custom")
+        for name in assets.SOUNDS:
+            if name != "battle-theme.wav":
+                self.assertEqual(rows[name], "generated", name)
+
+    def test_generated_ignores_a_custom_file_that_is_sitting_there(self):
+        # The A/B position: it has to work without moving anybody's files.
+        self.put(self.custom, "battle-theme.wav")
+        self.assertEqual(self.resolve("battle-theme.wav", "generated"),
+                         os.path.join(self.generated, "battle-theme.wav"))
+
+    def test_custom_is_silent_rather_than_falling_back(self):
+        # Otherwise `custom` and `auto` would be the same mode, and there
+        # would be no way to hear your own set and only your own set.
+        self.put(self.custom, "battle-theme.wav")
+        self.assertEqual(self.resolve("battle-theme.wav", "custom"),
+                         os.path.join(self.custom, "battle-theme.wav"))
+        self.assertIsNone(self.resolve("battle-hit.wav", "custom"))
+
+    def test_a_name_in_neither_directory_resolves_to_nothing(self):
+        self.assertIsNone(self.resolve("battle-nonesuch.wav", "auto"))
+
+    def test_the_environment_overrides_the_saved_mode_for_one_run(self):
+        path = os.path.join(self.root, "battles-assets")
+        with open(path, "w") as handle:
+            handle.write("custom\n")
+        self.assertEqual(assets.mode({}, path), "custom")
+        self.assertEqual(assets.mode({assets.ENV_VAR: "generated"}, path),
+                         "generated")
+        self.assertEqual(assets.saved_mode({}, path), "custom")
+
+    def test_nonsense_in_either_place_reads_as_the_default(self):
+        # A typo in a shell profile or a half-written state file must not take
+        # the sound out; it reads as unset.
+        path = os.path.join(self.root, "battles-assets")
+        with open(path, "w") as handle:
+            handle.write("GENERATED\n")           # case is forgiven
+        self.assertEqual(assets.mode({}, path), "generated")
+        with open(path, "w") as handle:
+            handle.write("whatever\n")
+        self.assertEqual(assets.mode({}, path), "auto")
+        self.assertEqual(assets.mode({assets.ENV_VAR: "custm"}, path), "auto")
+        self.assertEqual(assets.mode({}, os.path.join(self.root, "nope")),
+                         "auto")
+
+    def test_saving_a_mode_round_trips_and_refuses_nonsense(self):
+        path = os.path.join(self.root, "state", "battles-assets")
+        self.assertIsNone(assets.set_mode("custom", {}, path))
+        self.assertEqual(assets.mode({}, path), "custom")
+        self.assertIsNotNone(assets.set_mode("loud", {}, path))
+        self.assertEqual(assets.mode({}, path), "custom")   # left alone
+
+    def test_the_custom_directory_is_outside_the_checkout(self):
+        # A clone has to stay clean however much music is in it.
+        self.assertEqual(assets.custom_dir({"XDG_CONFIG_HOME": "/some/config"}),
+                         "/some/config/omarchy/pokemon-battles/assets")
+        self.assertFalse(assets.custom_dir().startswith(ROOT + os.sep))
+
+    def test_the_daemon_resolves_through_the_same_order(self):
+        # The daemon must not have a copy of any of this.
+        mine = self.put(self.custom, "battle-theme.wav")
+        sound = bd.Sound(assets=self.generated, custom=self.custom)
+        self.addCleanup(os.environ.pop, assets.ENV_VAR, None)
+        os.environ[assets.ENV_VAR] = "auto"
+        self.assertEqual(sound.resolve("battle-theme.wav"), mine)
+        os.environ[assets.ENV_VAR] = "generated"
+        self.assertEqual(sound.resolve("battle-theme.wav"),
+                         os.path.join(self.generated, "battle-theme.wav"))
+        os.environ[assets.ENV_VAR] = "custom"
+        self.assertIsNone(sound.resolve("battle-hit.wav"))
+
+    def test_the_daemon_and_the_cli_agree_on_where_the_mode_lives(self):
+        fresh = load_ctl()
+        self.assertEqual(fresh.battle_assets.mode_path(), assets.mode_path())
+        self.assertEqual(fresh.battle_assets.GENERATED, bd.ASSETS)
+
+
+class GeneratedAudio(unittest.TestCase):
+    """That what ships is really there, really audio, and really audible.
+
+    Nobody can hear a test, so this is the ear: a file that is present but
+    silent, clipped or half written sounds exactly like a bug in the daemon.
+    """
+
+    @staticmethod
+    def samples(name):
+        with wave.open(os.path.join(ROOT, "assets", name)) as handle:
+            block = array.array("h")
+            block.frombytes(handle.readframes(handle.getnframes()))
+            return handle.getframerate(), handle.getnchannels(), block
+
+    def test_every_generated_asset_is_a_playable_wav(self):
+        for name in assets.SOUNDS:
+            rate, channels, block = self.samples(name)
+            self.assertEqual(rate, 22050, name)
+            self.assertEqual(channels, 1, name)
+            self.assertGreater(len(block), rate // 20, name)
+
+    def test_nothing_is_silent_and_nothing_clips(self):
+        for name in assets.SOUNDS:
+            _, _, block = self.samples(name)
+            peak = max(abs(value) for value in block)
+            rms = math.sqrt(sum(float(v) * v for v in block) / len(block))
+            self.assertGreater(peak, 0.2 * 32767, "%s is near silent" % name)
+            self.assertLess(peak, 32767, "%s clips" % name)
+            self.assertGreater(rms, 0.01 * 32767, "%s is near silent" % name)
+
+    def test_the_one_shots_are_short_enough_not_to_trample_each_other(self):
+        # They share one channel, so a new one cuts the last one off. Any
+        # longer than a line of text takes to advance and they would queue up.
+        for name in ("battle-select.wav", "battle-hit.wav", "battle-heal.wav"):
+            rate, _, block = self.samples(name)
+            self.assertLess(len(block) / float(rate), 0.5, name)
+
+    def test_the_theme_loops_without_a_click(self):
+        rate, _, block = self.samples("battle-theme.wav")
+        seconds = len(block) / float(rate)
+        self.assertGreater(seconds, 20.0)
+        self.assertLess(seconds, 40.0)
+        # The player restarts at sample zero, so the two ends are adjacent. A
+        # step there bigger than the steps inside the file is the click; both
+        # ends are taken to nothing, so there should be no step at all.
+        seam = abs(block[0] - block[-1])
+        inside = max(abs(block[index + 1] - block[index])
+                     for index in range(0, len(block) - 1, 97))
+        self.assertLessEqual(seam, inside, "the loop point clicks")
+        self.assertLess(seam, 0.01 * 32767)
+
+    def test_the_theme_leaves_room_for_the_one_shots(self):
+        # Both channels go through the same player at the same volume, so the
+        # music has to be mixed under the sounds that play over it.
+        _, _, music = self.samples("battle-theme.wav")
+        _, _, hit = self.samples("battle-hit.wav")
+        self.assertLess(max(abs(value) for value in music),
+                        max(abs(value) for value in hit))
 
 
 if __name__ == "__main__":

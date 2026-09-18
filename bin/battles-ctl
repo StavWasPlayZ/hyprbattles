@@ -14,6 +14,21 @@
     battles-ctl pantry          # what is on the shelves right now: a live,
                                 # read-only reading of the machine
 
+    battles-ctl assets          # which sound is coming from which file, and
+                                # why. The thing to run when your own file is
+                                # not playing.
+    battles-ctl assets auto|generated|custom
+                                # auto      your file when there is one, the
+                                #           generated one when there is not,
+                                #           decided per file. The default.
+                                # generated only what ships, even with your
+                                #           files sitting there: the A/B
+                                #           position, no files moved.
+                                # custom    only your files. A name you have
+                                #           not supplied is silent.
+                                # POKEMON_BATTLES_ASSETS=<mode> overrides the
+                                # saved setting for one process.
+
     battles-ctl key <name>      # left|right|up|down|confirm|back|leave, the
                                 # overlay's keyboard mapped onto the controls
 
@@ -30,6 +45,15 @@ import os
 import socket
 import sys
 
+PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(PLUGIN_ROOT, "lib"))
+# The one exception to this script importing nothing. Two copies of the
+# resolution order would be two answers to "which file is playing", and the
+# whole reason `battles-ctl assets` exists is to be the one that is right.
+# The module is pure stdlib, does nothing at import and stats at most a
+# handful of paths.
+import battle_assets                                        # noqa: E402
+
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
 SOCKET_PATH = os.path.join(RUNTIME_DIR, "hyprscroll2d-battle.sock")
 STATE_HOME = (os.environ.get("XDG_STATE_HOME")
@@ -40,9 +64,9 @@ STATE_HOME = (os.environ.get("XDG_STATE_HOME")
 DISABLED_FLAG = os.path.join(STATE_HOME, "hyprscroll2d", "battles-disabled")
 
 COMMANDS = ("status", "enabled", "on", "off", "toggle", "cancel", "stop",
-            "debug", "pantry", "pick", "advance", "key")
+            "debug", "pantry", "assets", "pick", "advance", "key")
 # These work without a daemon; the rest need one.
-OFFLINE = ("enabled", "on", "off", "toggle")
+OFFLINE = ("enabled", "on", "off", "toggle", "assets")
 
 
 def describe(amount, unit):
@@ -55,6 +79,39 @@ def describe(amount, unit):
     if unit:
         return "%d %s" % (int(amount), unit)
     return "%d" % int(amount)
+
+
+def assets(argv):
+    """Set the assets mode, or say what every sound is resolving to and why.
+
+    The listing is the point of the command. "My file is not playing" has
+    three ordinary causes - the mode is `generated`, the name is not one the
+    daemon ever asks for, or the file is not where it needs to be - and all
+    three are visible in the same three columns.
+    """
+    if argv:
+        error = battle_assets.set_mode(argv[0].strip().lower())
+        if error:
+            print(error, file=sys.stderr)
+            return 2
+        # A running daemon reads the mode on each play, so this is only to end
+        # a battle mid-theme cleanly; nothing depends on it arriving.
+        nudge()
+
+    override = battle_assets.override_mode()
+    saved = battle_assets.saved_mode()
+    active = override or saved
+    if override and override != saved:
+        print("mode       %-10s (%s, overriding the saved %s)"
+              % (active, battle_assets.ENV_VAR, saved))
+    else:
+        print("mode       %s" % active)
+    print("generated  %s" % battle_assets.GENERATED)
+    print("custom     %s" % battle_assets.custom_dir())
+    print()
+    for name, path, source in battle_assets.resolution(active):
+        print("%-19s %-10s %s" % (name, source, path or "- nothing to play -"))
+    return 0
 
 
 def enabled():
@@ -107,6 +164,9 @@ def main(argv):
     # The switch is a file, so reading and flipping it never needs the daemon.
     # That matters: the menu row's `checked` condition has to answer while the
     # shell is restarting, and turning battles off has to work then too.
+    if argument == "assets":
+        return assets(argv[2:])
+
     if argument in OFFLINE:
         if argument != "enabled":
             wanted = not enabled() if argument == "toggle" else argument == "on"
