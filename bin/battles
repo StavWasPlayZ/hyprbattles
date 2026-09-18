@@ -85,11 +85,11 @@ BATTLE_COOLDOWN = 6.0       # quiet period after one, so they do not stack
 # daemon caps what a client may ask for, so this is close to that ceiling.
 ENCOUNTER_RUMBLE_MS = 1000
 RENEW_INTERVAL = 1.5        # lease renewals, comfortably inside the pad's TTL
-CLIENT_NAME = "pokemon-battles"
+CLIENT_NAME = "hyprbattles"
 
 
 def log(message):
-    print("pokemon-battles: %s" % message, file=sys.stderr, flush=True)
+    print("hyprbattles: %s" % message, file=sys.stderr, flush=True)
 
 
 # -------------------------------------------------------------- Hyprland IPC

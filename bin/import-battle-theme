@@ -9,8 +9,8 @@ daemon picks whichever of them is installed.
 The result goes **outside the checkout**, into the custom assets directory,
 so a clone stays clean however much music ends up in it:
 
-    ~/.config/omarchy/pokemon-battles/assets/battle-theme.source.<ext>
-    ~/.config/omarchy/pokemon-battles/assets/battle-theme.wav
+    ~/.config/omarchy/hyprbattles/assets/battle-theme.source.<ext>
+    ~/.config/omarchy/hyprbattles/assets/battle-theme.wav
 
     bin/import-battle-theme                     # re-decode the saved source
     bin/import-battle-theme ~/some-track.mp3    # take a new one

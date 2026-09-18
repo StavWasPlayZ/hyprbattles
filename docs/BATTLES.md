@@ -326,7 +326,7 @@ Any of the seven can be replaced without touching the repository. Drop a file
 of the same name into
 
 ```
-~/.config/omarchy/pokemon-battles/assets/
+~/.config/omarchy/hyprbattles/assets/
 ```
 
 (`$XDG_CONFIG_HOME` is respected). That directory is deliberately **outside the
@@ -346,12 +346,12 @@ bin/battles-ctl assets                  # the mode, and what every sound
                                         # is actually resolving to
 bin/battles-ctl assets generated        # A/B against what ships
 bin/battles-ctl assets auto             # back to the default
-POKEMON_BATTLES_ASSETS=custom bin/battles-ctl assets   # one run only
+HYPRBATTLES_ASSETS=custom bin/battles-ctl assets   # one run only
 ```
 
 The mode is a file, `~/.local/state/hyprscroll2d/battles-assets`, the same
 shape as the on/off flag beside it, so it reads and writes with the shell down.
-`POKEMON_BATTLES_ASSETS` overrides it for one process. The daemon resolves on
+`HYPRBATTLES_ASSETS` overrides it for one process. The daemon resolves on
 every `play()`, so a change lands on the next sound rather than on the next
 restart.
 
@@ -363,7 +363,7 @@ in the same three columns:
 ```
 mode       auto
 generated  .../plugins/dev.cstav.omarchy.plugin.pokemon-battles/assets
-custom     /home/you/.config/omarchy/pokemon-battles/assets
+custom     /home/you/.config/omarchy/hyprbattles/assets
 
 battle-theme.wav    custom     /home/you/.config/omarchy/.../battle-theme.wav
 battle-select.wav   generated  .../assets/battle-select.wav

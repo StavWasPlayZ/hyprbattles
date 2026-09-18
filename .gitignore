@@ -8,7 +8,7 @@ __pycache__/
 # and with nothing in it that anybody else wrote.
 #
 # Music you supply yourself does not live here at all. It lives outside the
-# checkout, in ~/.config/omarchy/pokemon-battles/assets/, where git cannot see
+# checkout, in ~/.config/omarchy/hyprbattles/assets/, where git cannot see
 # it however large it is and whatever its licence says - see
 # lib/battle_assets.py and `bin/battles-ctl assets`. This entry is what is
 # left of the old arrangement: whatever a theme was decoded from used to be

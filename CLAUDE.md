@@ -99,9 +99,9 @@ All seven WAVs are synthesised by `bin/make-battle-audio` from the stdlib
 `wave` module and committed, so a clone fights with sound and ships nothing
 anyone else wrote. **Keep it that way** — no third-party audio, fonts, sprites
 or names, and no cover of an existing tune. User music goes *outside* the
-checkout, in `$XDG_CONFIG_HOME/omarchy/pokemon-battles/assets/`, resolved per
+checkout, in `$XDG_CONFIG_HOME/omarchy/hyprbattles/assets/`, resolved per
 file by mode (`auto`/`generated`/`custom`), overridable for one run with
-`POKEMON_BATTLES_ASSETS`.
+`HYPRBATTLES_ASSETS`.
 
 ## Conventions
 

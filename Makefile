@@ -24,6 +24,6 @@ check: test
 	@if command -v omarchy >/dev/null 2>&1; then omarchy plugin validate .; fi
 
 # Regenerate the committed chiptune, the looping theme included. It does not
-# touch anything in ~/.config/omarchy/pokemon-battles/assets/.
+# touch anything in ~/.config/omarchy/hyprbattles/assets/.
 audio:
 	python3 bin/make-battle-audio

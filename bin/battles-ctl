@@ -26,7 +26,7 @@
                                 #           position, no files moved.
                                 # custom    only your files. A name you have
                                 #           not supplied is silent.
-                                # POKEMON_BATTLES_ASSETS=<mode> overrides the
+                                # HYPRBATTLES_ASSETS=<mode> overrides the
                                 # saved setting for one process.
 
     battles-ctl key <name>      # left|right|up|down|confirm|back|leave, the

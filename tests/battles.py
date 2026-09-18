@@ -1674,7 +1674,7 @@ class Assets(unittest.TestCase):
     def test_the_custom_directory_is_outside_the_checkout(self):
         # A clone has to stay clean however much music is in it.
         self.assertEqual(assets.custom_dir({"XDG_CONFIG_HOME": "/some/config"}),
-                         "/some/config/omarchy/pokemon-battles/assets")
+                         "/some/config/omarchy/hyprbattles/assets")
         self.assertFalse(assets.custom_dir().startswith(ROOT + os.sep))
 
     def test_the_daemon_resolves_through_the_same_order(self):

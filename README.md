@@ -67,7 +67,7 @@ omarchy restart shell
 Then add the toggle to `~/.config/omarchy/extensions/omarchy-menu.jsonc`:
 
 ```jsonc
-"trigger.toggle.window-battles": {"icon":"\udb81\udf87","label":"Window Battles","aliases":["battles","pokemon"],"when":"test -x $HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.pokemon-battles/bin/battles-ctl","checked":"[ \"$($HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.pokemon-battles/bin/battles-ctl enabled)\" = true ]","action":"$HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.pokemon-battles/bin/battles-ctl toggle"},
+"trigger.toggle.window-battles": {"icon":"\udb81\udf87","label":"Window Battles","aliases":["battles","hyprbattles","pokemon"],"when":"test -x $HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.pokemon-battles/bin/battles-ctl","checked":"[ \"$($HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.pokemon-battles/bin/battles-ctl enabled)\" = true ]","action":"$HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.pokemon-battles/bin/battles-ctl toggle"},
 ```
 
 It lands under **Trigger -> Toggle**, beside the other switches, with a tick
@@ -97,7 +97,7 @@ battle already on screen can be ended.
 
 Seven generated WAVs ship with it, the looping battle theme included, so a
 fresh clone fights with sound. To use something else, drop a file of the same
-name into `~/.config/omarchy/pokemon-battles/assets/` - outside the checkout,
+name into `~/.config/omarchy/hyprbattles/assets/` - outside the checkout,
 so a clone stays clean however much music ends up in it:
 
 ```bash
@@ -109,7 +109,7 @@ bin/battles-ctl assets auto         # yours when there is one, else the
                                     # generated one. Per file. The default.
 ```
 
-`POKEMON_BATTLES_ASSETS=generated` overrides the saved mode for one run, and
+`HYPRBATTLES_ASSETS=generated` overrides the saved mode for one run, and
 `bin/import-battle-theme <file>` decodes an MP3 into the right place. The whole
 story, including what the generated theme is made of, is in
 [Sound](docs/BATTLES.md#sound).
@@ -150,7 +150,7 @@ No sprites, audio, fonts or names from any commercial game, and no cover of
 one, because a cover is still somebody else's composition.
 
 Your own music goes **outside the checkout**, in
-`~/.config/omarchy/pokemon-battles/assets/`, where nothing you put there can
+`~/.config/omarchy/hyprbattles/assets/`, where nothing you put there can
 reach the repository whatever its licence says. See
 [Sound](docs/BATTLES.md#sound).
 
