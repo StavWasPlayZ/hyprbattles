@@ -1,12 +1,13 @@
-# Window Battles
+# hyprbattles
 
-Throw a window at another window - with a controller or with the keyboard -
-and, one time in four, the two of them settle it in a turn-based fight instead
-of just swapping places.
+Swap one window with another and, one time in four - the two of them settle it in a turn-based fight instead
+of just handling it like adults.
 
-Types, HP bars, a move menu, a `FIGHT`/`ITEM`/`RUN` choice, chiptune - and the
+Inspired by Pokemon: Types, HP bars, a move menu, a `FIGHT`/`ITEM`/`RUN` choice, chiptune - and the
 fighters are the windows themselves, still running, captured onto a battle
-screen over your own wallpaper. The winner keeps the cell they were arguing
+screen over your own wallpaper.
+
+The winner keeps the cell they were arguing
 about.
 
 Creatures eat, too, and the food is your actual machine: free memory, page
