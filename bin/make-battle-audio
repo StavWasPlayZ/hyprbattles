@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Synthesise the battle's win and loss fanfares into assets/.
+
+Everything here is written from scratch with the standard library's `wave`
+module: no sample packs, no downloads, nothing lifted from a commercial game
+or from a cover of one. The voices are the ones a 1980s sound chip had - a
+pulse channel with a switchable duty cycle for the melody and harmony, and a
+triangle for the bass - because that, rather than any particular tune, is what
+makes a soundtrack sound 8-bit.
+
+The theme that loops for the length of a battle is not generated: it is an
+audio file imported by bin/import-battle-theme, and this script leaves
+assets/battle-theme.wav alone.
+
+Run it after changing a pattern; the resulting WAVs are committed so a fresh
+checkout has audio without running anything:
+
+    bin/make-battle-audio
+
+Five files come out:
+
+    assets/battle-hit.wav       the one-shot for a creature being struck
+    assets/battle-select.wav    the blip under every menu press
+    assets/battle-levelup.wav   the rising sting when the challenger wins
+    assets/battle-victory.wav   a short fanfare for a win
+    assets/battle-defeat.wav    the same length, and considerably sadder
+
+The daemon plays whatever sits at those paths and cares about nothing else
+about them, so swapping a file out is a supported thing to do. What you are
+allowed to put there is between you and whoever wrote it; this repository
+ships only music it generated itself.
+"""
+
+import array
+import math
+import os
+import random
+import sys
+import wave
+
+RATE = 22050
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ASSETS = os.path.join(ROOT, "assets")
+
+# Semitone offsets from A, so a note name turns into a frequency without a
+# lookup table per octave.
+NOTES = {"C": -9, "C#": -8, "D": -7, "D#": -6, "E": -5, "F": -4, "F#": -3,
+         "G": -2, "G#": -1, "A": 0, "A#": 1, "B": 2}
+
+
+def frequency(name):
+    """"A4" -> 440.0. A rest is written as "-" and has no frequency."""
+    if name == "-":
+        return 0.0
+    pitch, octave = name[:-1], int(name[-1])
+    return 440.0 * (2.0 ** (NOTES[pitch] / 12.0 + (octave - 4)))
+
+
+def envelope(index, total, attack, release):
+    """A linear attack and release in samples, flat in between."""
+    if index < attack:
+        return index / float(attack or 1)
+    remaining = total - index
+    if remaining < release:
+        return remaining / float(release or 1)
+    return 1.0
+
+
+def pulse(buffer, start, samples, hertz, level, duty=0.5, decay=0.0):
+    """A square wave with a duty cycle: the chip's melody and harmony voice."""
+    if hertz <= 0:
+        return
+    period = RATE / hertz
+    attack = min(int(RATE * 0.004), samples // 4)
+    release = min(int(RATE * 0.02), samples // 3)
+    for index in range(samples):
+        position = (index % period) / period
+        shape = 1.0 if position < duty else -1.0
+        gain = level * envelope(index, samples, attack, release)
+        if decay:
+            gain *= math.exp(-decay * index / RATE)
+        offset = start + index
+        if offset < len(buffer):
+            buffer[offset] += shape * gain
+
+
+def triangle(buffer, start, samples, hertz, level):
+    """The bass voice. A triangle is softer than a square and sits under it."""
+    if hertz <= 0:
+        return
+    period = RATE / hertz
+    attack = min(int(RATE * 0.004), samples // 4)
+    release = min(int(RATE * 0.02), samples // 3)
+    for index in range(samples):
+        position = (index % period) / period
+        shape = 4.0 * abs(position - 0.5) - 1.0
+        offset = start + index
+        if offset < len(buffer):
+            buffer[offset] += shape * level * envelope(index, samples, attack, release)
+
+
+def noise(buffer, start, samples, level, decay=18.0, rng=None):
+    """The percussion channel: white noise through a fast decay."""
+    rng = rng or random.Random(7)
+    for index in range(samples):
+        gain = level * math.exp(-decay * index / RATE)
+        offset = start + index
+        if offset < len(buffer):
+            buffer[offset] += rng.uniform(-1.0, 1.0) * gain
+
+
+def write(path, buffer):
+    """Normalise to just under full scale and write 16-bit mono."""
+    peak = max((abs(value) for value in buffer), default=1.0) or 1.0
+    scale = 0.86 / peak
+    frames = array.array("h", (int(max(-1.0, min(1.0, value * scale)) * 32767)
+                               for value in buffer))
+    if sys.byteorder == "big":
+        frames.byteswap()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with wave.open(path, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(RATE)
+        handle.writeframes(frames.tobytes())
+    return len(frames) / float(RATE)
+
+
+# ----------------------------------------------------------------- the hit
+
+def build_hit():
+    """A short, nasty one-shot for the moment a creature is struck.
+
+    Noise through a fast decay for the impact, with a square sweeping
+    downwards under it for the weight. It has to be brief: it plays over the
+    music, several times a turn.
+    """
+    total = int(RATE * 0.22)
+    buffer = [0.0] * total
+    noise(buffer, 0, int(RATE * 0.12), 0.55, 40.0, random.Random(4))
+    # The downward sweep, in steps, the way a chip with no portamento does it.
+    steps = 10
+    for index in range(steps):
+        start = int(RATE * 0.005 * index)
+        hertz = 420.0 * (0.72 ** index)
+        pulse(buffer, start, int(RATE * 0.02), hertz, 0.32, duty=0.25)
+    return buffer
+
+
+# --------------------------------------------------------------- the blip
+
+def build_select():
+    """The click under every menu press: cursor moves, and taking an option.
+
+    Two short square notes a fifth apart. It has to be tiny - it plays on
+    every single d-pad tap - so it is under a tenth of a second and quieter
+    than everything else here.
+    """
+    total = int(RATE * 0.09)
+    buffer = [0.0] * total
+    pulse(buffer, 0, int(RATE * 0.025), 880.0, 0.30, duty=0.5)
+    pulse(buffer, int(RATE * 0.025), int(RATE * 0.045), 1320.0, 0.26, duty=0.25)
+    return buffer
+
+
+# ------------------------------------------------------------- the level up
+
+def build_levelup():
+    """The jingle for winning: a rising arpeggio that lands on the octave.
+
+    It plays over the top of the victory fanfare rather than instead of it,
+    the same way the games this is imitating stack a short sting on the music
+    underneath, so it has to be short and it has to end high.
+    """
+    steps = ["A4", "C5", "E5", "A5", "C6", "E6", "A6"]
+    total = int(RATE * 0.9)
+    buffer = [0.0] * total
+    cursor = 0.0
+    for index, note in enumerate(steps):
+        # The last note rings; the climb up to it is quick.
+        length = 0.30 if index == len(steps) - 1 else 0.055
+        start = int(RATE * cursor)
+        pulse(buffer, start, int(RATE * length), frequency(note), 0.32,
+              duty=0.5 if index % 2 == 0 else 0.25)
+        cursor += length
+    return buffer
+
+
+# ------------------------------------------------------------- the fanfares
+
+VICTORY = [("A4", 1), ("A4", 1), ("A4", 1), ("A4", 3), ("F4", 1), ("G4", 1),
+           ("A4", 2), ("G4", 1), ("A4", 5)]
+
+DEFEAT = [("A4", 3), ("G4", 1), ("F4", 3), ("E4", 1),
+          ("D4", 4), ("C4", 4), ("B3", 2), ("A3", 6)]
+
+
+def build_fanfare(pattern, step, bass_note, bright):
+    total = int(RATE * step * sum(length for _, length in pattern)) + RATE // 2
+    buffer = [0.0] * total
+    cursor = 0.0
+    for note, length in pattern:
+        samples = int(RATE * step * length)
+        start = int(RATE * cursor)
+        pulse(buffer, start, samples, frequency(note), 0.34,
+              duty=0.5 if bright else 0.25)
+        # An octave below in the harmony voice makes it sound arranged rather
+        # than beeped.
+        pulse(buffer, start, samples, frequency(note) / 2.0, 0.12, duty=0.25)
+        cursor += step * length
+    triangle(buffer, 0, int(RATE * cursor), frequency(bass_note), 0.16)
+    return buffer
+
+
+def main():
+    hit = write(os.path.join(ASSETS, "battle-hit.wav"), build_hit())
+    select = write(os.path.join(ASSETS, "battle-select.wav"), build_select())
+    levelup = write(os.path.join(ASSETS, "battle-levelup.wav"), build_levelup())
+    victory = write(os.path.join(ASSETS, "battle-victory.wav"),
+                    build_fanfare(VICTORY, 0.11, "A2", True))
+    defeat = write(os.path.join(ASSETS, "battle-defeat.wav"),
+                   build_fanfare(DEFEAT, 0.17, "A2", False))
+    print("battle-hit.wav     %5.1fs" % hit)
+    print("battle-select.wav  %5.1fs" % select)
+    print("battle-levelup.wav %5.1fs" % levelup)
+    print("battle-victory.wav %5.1fs" % victory)
+    print("battle-defeat.wav  %5.1fs" % defeat)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

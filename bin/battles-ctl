@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Ask the window-battles daemon what it is doing, or tell it what to do.
+
+    battles-ctl                 # the battle on screen as JSON, or inactive
+    battles-ctl enabled         # "true" or "false", for a menu `checked:` line
+    battles-ctl on|off|toggle   # turn battles on or off, remembered across
+                                # restarts. Works with the daemon stopped: the
+                                # setting is a file, not a running process.
+    battles-ctl cancel          # flee the battle on screen (what Escape does)
+    battles-ctl stop            # tear it down at once, without the closing line
+    battles-ctl debug           # force one between the focused window and its
+                                # neighbour, for working on the overlay
+
+    battles-ctl key <name>      # left|right|up|down|confirm|back|leave, the
+                                # overlay's keyboard mapped onto the controls
+
+    battles-ctl pick [n]        # play move n of the battle on screen, and
+    battles-ctl advance         # step the text on: both debug aids, so the
+                                # overlay can be driven without a controller
+
+Turning battles off stops any battle from starting at all; it is checked
+before the roll. A battle already on screen ends when it is switched off.
+"""
+
+import json
+import os
+import socket
+import sys
+
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+SOCKET_PATH = os.path.join(RUNTIME_DIR, "hyprscroll2d-battle.sock")
+STATE_HOME = (os.environ.get("XDG_STATE_HOME")
+              or os.path.expanduser("~/.local/state"))
+# Presence means off. The file is the setting - not the daemon - so the menu
+# row can read and flip it while the shell is restarting, or before the daemon
+# has ever run. The daemon reads the same file on every collision.
+DISABLED_FLAG = os.path.join(STATE_HOME, "hyprscroll2d", "battles-disabled")
+
+COMMANDS = ("status", "enabled", "on", "off", "toggle", "cancel", "stop",
+            "debug", "pick", "advance", "key")
+# These work without a daemon; the rest need one.
+OFFLINE = ("enabled", "on", "off", "toggle")
+
+
+def enabled():
+    return not os.path.exists(DISABLED_FLAG)
+
+
+def set_enabled(wanted):
+    try:
+        if wanted:
+            os.unlink(DISABLED_FLAG)
+        else:
+            os.makedirs(os.path.dirname(DISABLED_FLAG), exist_ok=True)
+            open(DISABLED_FLAG, "w").close()
+    except FileNotFoundError:
+        pass                    # already off, or already on
+    except OSError as error:
+        print("cannot save the setting: %s" % error, file=sys.stderr)
+        return False
+    return True
+
+
+def nudge():
+    """Best effort: tell a running daemon the setting moved, so it can end a
+    battle that is on screen. Nothing to do if it is not running."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as client:
+            client.settimeout(0.3)
+            client.sendto(b"refresh", SOCKET_PATH)
+    except OSError:
+        pass
+
+
+def ask(message):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as client:
+        client.bind("")             # abstract autobind, so the reply lands here
+        client.settimeout(1.0)
+        client.sendto(message.encode(), SOCKET_PATH)
+        return json.loads(client.recv(8192).decode())
+
+
+def main(argv):
+    argument = (argv[1] if len(argv) > 1 else "status").lower()
+    if argument in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    if argument not in COMMANDS:
+        print("unknown command: %s" % argument, file=sys.stderr)
+        return 2
+
+    # The switch is a file, so reading and flipping it never needs the daemon.
+    # That matters: the menu row's `checked` condition has to answer while the
+    # shell is restarting, and turning battles off has to work then too.
+    if argument in OFFLINE:
+        if argument != "enabled":
+            wanted = not enabled() if argument == "toggle" else argument == "on"
+            if not set_enabled(wanted):
+                return 1
+            nudge()
+        print("true" if enabled() else "false")
+        return 0
+
+    message = (" ".join([argument] + argv[2:])
+               if argument in ("pick", "key") else argument)
+    try:
+        state = ask(message)
+    except (OSError, ValueError):
+        print("window battles daemon is not running", file=sys.stderr)
+        return 1
+
+    print(json.dumps(state))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

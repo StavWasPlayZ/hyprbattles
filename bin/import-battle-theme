@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Decode the battle theme audio file into the WAV the daemon plays.
+
+The theme is a fan-made cover of the Red/Blue wild battle theme rather than
+anything synthesised here, so it arrives as a compressed file. `aplay` and `paplay` only understand PCM,
+and the daemon picks whichever player is installed, so the cover is kept as
+the source next to the asset and decoded once:
+
+    assets/battle-theme.source.mp3   the cover as supplied
+    assets/battle-theme.wav          16-bit PCM, what Sound.play() opens
+
+Run it after replacing the source, or point it at a different file:
+
+    bin/import-battle-theme
+    bin/import-battle-theme ~/Downloads/some-other-track.mp3
+
+Only the theme comes from an audio file; the win and loss stings are still
+synthesised by bin/make-battle-audio.
+"""
+
+import os
+import shutil
+import subprocess
+import sys
+import wave
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ASSETS = os.path.join(ROOT, "assets")
+SOURCE = os.path.join(ASSETS, "battle-theme.source.mp3")
+TARGET = os.path.join(ASSETS, "battle-theme.wav")
+
+
+def main(argv):
+    source = argv[1] if len(argv) > 1 else SOURCE
+
+    if not shutil.which("ffmpeg"):
+        print("import-battle-theme: ffmpeg is needed to decode the theme",
+              file=sys.stderr)
+        return 1
+    if not os.path.exists(source):
+        print("import-battle-theme: no such file: %s" % source, file=sys.stderr)
+        return 1
+
+    # A file handed in from elsewhere becomes the committed source, so the
+    # plugin keeps working after the download directory is cleared.
+    if os.path.abspath(source) != os.path.abspath(SOURCE):
+        shutil.copyfile(source, SOURCE)
+
+    # Straight decode: CD rate, stereo, no metadata. The cover has no silence
+    # at either end, so nothing is trimmed and the loop point is seamless.
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-v", "error", "-y", "-i", SOURCE,
+         "-map", "0:a:0", "-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le",
+         "-map_metadata", "-1", TARGET],
+        check=True)
+
+    with wave.open(TARGET) as handle:
+        seconds = handle.getnframes() / float(handle.getframerate())
+    print("battle-theme.wav   %5.1fs" % seconds)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

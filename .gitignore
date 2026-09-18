@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.swp
+*.tmp
+
+# The looping battle theme and whatever it was imported from are supplied
+# locally, not by this repository: bin/make-battle-audio generates the two
+# fanfares and nothing else. The daemon treats a missing theme as silence, so
+# a fresh checkout still plays and still fights; it just does it quietly until
+# someone drops a file they have the right to use at assets/battle-theme.wav.
+assets/battle-theme.wav
+assets/*.source.*

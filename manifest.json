@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "dev.cstav.omarchy.plugin.pokemon-battles",
+  "name": "Window Battles",
+  "version": "1.0.0",
+  "author": "stav",
+  "license": "MIT",
+  "description": "Throw a window at another window and settle it in a turn-based fight",
+  "kinds": [
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}

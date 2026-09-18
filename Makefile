@@ -1,0 +1,26 @@
+.PHONY: test check audio
+
+test:
+	python3 tests/battles.py
+
+check: test
+	python3 -m py_compile bin/battles bin/battles-ctl bin/make-battle-audio
+	python3 -m py_compile lib/battle_rules.py
+	python3 -m json.tool manifest.json >/dev/null
+	test -f Service.qml
+	test -f Battle.qml
+	test -f PixelText.qml
+	test -f BattleFighter.qml
+	test -f BattleStatusBox.qml
+	test -f BattleTypeChip.qml
+	test -f assets/battle-select.wav
+	test -f assets/battle-hit.wav
+	test -f assets/battle-levelup.wav
+	test -f assets/battle-victory.wav
+	test -f assets/battle-defeat.wav
+	@if command -v omarchy >/dev/null 2>&1; then omarchy plugin validate .; fi
+
+# Regenerate the committed chiptune. The looping theme is supplied locally and
+# is not touched by this.
+audio:
+	python3 bin/make-battle-audio

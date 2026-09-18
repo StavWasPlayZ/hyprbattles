@@ -1,0 +1,905 @@
+#!/usr/bin/env python3
+"""Run window battles: watch for a pad-driven collision, roll for it, fight.
+
+This daemon owns the whole feature. It waits for the gamepad plugin to report
+that the controller just threw one window into another, rolls the odds, and on
+a hit borrows the pad, runs a turn-based fight between the two windows and
+publishes it for the overlay (Battle.qml) to draw.
+
+It depends on two plugins and requires neither:
+
+  * the gamepad plugin posts the collision this listens for, and lends it the
+    controller (its docs/PAD-API.md). Without it, nothing ever triggers;
+  * the Hyprscroll2D layout plugin is what makes windows collide at all, and
+    the one `move` message a lost battle sends is its. Without it, likewise.
+
+Neither is imported, linked against or looked for on disk. Both are reached
+through Hyprland's own sockets, so a missing one means no battles rather than
+an error.
+
+The rules are in lib/battle_rules.py, which has no I/O in it at all; this file
+is the wiring, and Battle.qml is the picture. Nothing here can do more to a
+window than ask the layout to move it one cell.
+
+No third-party Python modules.
+"""
+
+import ctypes
+import json
+import os
+import random
+import selectors
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(PLUGIN_ROOT, "lib"))
+import battle_rules as rules                                # noqa: E402
+
+PR_SET_PDEATHSIG = 1
+
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+STATE_HOME = (os.environ.get("XDG_STATE_HOME")
+              or os.path.expanduser("~/.local/state"))
+
+STATE_PATH = os.path.join(RUNTIME_DIR, "hyprscroll2d-battle.json")
+SOCKET_PATH = os.path.join(RUNTIME_DIR, "hyprscroll2d-battle.sock")
+# The gamepad plugin's control socket, which is also where a lease is asked
+# for. Only the path is shared; nothing else about that plugin is known here.
+GAMEPAD_SOCKET = os.path.join(RUNTIME_DIR, "hyprscroll2d-gamepad.sock")
+
+# Presence of the flag means battles are off, matching the way the bar toggle
+# and the minimap remember themselves.
+DISABLED_FLAG = os.path.join(STATE_HOME, "hyprscroll2d", "battles-disabled")
+BAR_FLAG_PATH = os.path.join(STATE_HOME, "omarchy", "toggles", "bar-off")
+ASSETS = os.path.join(PLUGIN_ROOT, "assets")
+
+# What the layout plugin posts whenever a move swaps two windows instead of
+# stepping into an empty cell, whatever asked for the move. This is the
+# trigger: a window thrown by SUPER + SHIFT + H deserves a battle exactly as
+# much as one thrown by the d-pad.
+LAYOUT_COLLISION_EVENT = "io.github.kirollosatef.hyprscroll2d:collision"
+# And the gamepad plugin's narrower version of the same thing, posted only
+# when the pad caused it. Listened for as well, so a pad-driven battle knows
+# it is pad-driven; the two are de-duplicated below, because for a d-pad move
+# both arrive.
+PAD_COLLISION_EVENT = "dev.cstav.omarchy.plugin.hyprscroll2d-gamepad:collision"
+# How long the two reports of one collision can be apart.
+COLLISION_DEDUP = 0.5
+
+BATTLE_COOLDOWN = 6.0       # quiet period after one, so they do not stack
+RENEW_INTERVAL = 1.5        # lease renewals, comfortably inside the pad's TTL
+CLIENT_NAME = "pokemon-battles"
+
+
+def log(message):
+    print("pokemon-battles: %s" % message, file=sys.stderr, flush=True)
+
+
+# -------------------------------------------------------------- Hyprland IPC
+
+class Hyprland:
+    """Just enough of Hyprland's sockets: ask it things, tell it things, and
+    listen to what it announces."""
+
+    def __init__(self):
+        self.signature = (os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+                          or self._discover())
+        base = os.path.join(RUNTIME_DIR, "hypr", self.signature or "")
+        self.command_socket = os.path.join(base, ".socket.sock")
+        self.event_socket = os.path.join(base, ".socket2.sock")
+
+    @staticmethod
+    def _discover():
+        root = os.path.join(RUNTIME_DIR, "hypr")
+        try:
+            candidates = [
+                entry for entry in os.listdir(root)
+                if os.path.exists(os.path.join(root, entry, ".socket.sock"))
+            ]
+        except OSError:
+            return None
+        return candidates[0] if len(candidates) == 1 else None
+
+    def request(self, payload):
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(1.0)
+                client.connect(self.command_socket)
+                client.sendall(payload.encode())
+                chunks = []
+                while True:
+                    chunk = client.recv(8192)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+            return b"".join(chunks).decode(errors="replace")
+        except OSError:
+            return ""
+
+    def dispatch(self, command):
+        # This Hyprland is configured in Lua and evaluates `hl.dispatch(<what
+        # we sent>)`, so a classic dispatcher string is a syntax error that
+        # comes back in a reply nobody reads. Everything sent from here is an
+        # hl.dsp expression.
+        return self.request("/dispatch " + command) if command else ""
+
+    def query(self, what):
+        try:
+            return json.loads(self.request("j/" + what))
+        except (ValueError, TypeError):
+            return None
+
+    def events(self):
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.connect(self.event_socket)
+        return client
+
+
+# -------------------------------------------------------------------- sound
+
+class Sound:
+    """One audio channel: plays a file, and stops it again.
+
+    Two of these run at once - one for the music, one for the one-shots - so a
+    hit lands over the theme instead of cutting it off.
+
+    The player is whichever of the usual suspects is installed. With none of
+    them, or with a missing file, battles are silent; neither is a reason to
+    refuse a battle.
+    """
+
+    def __init__(self, assets=ASSETS):
+        self.assets = assets
+        self.process = None
+
+    @staticmethod
+    def command(path, loop):
+        """The first available player, as an argv, or None."""
+        if shutil.which("mpv"):
+            argv = ["mpv", "--no-video", "--no-terminal", "--really-quiet",
+                    "--volume=55"]
+            if loop:
+                argv.append("--loop=inf")
+            return argv + [path]
+        for name in ("pw-play", "paplay", "aplay"):
+            if shutil.which(name):
+                if not loop:
+                    return [name, path]
+                # None of these loop on their own: re-run it, and stop on the
+                # first failure so a deleted file cannot spin a shell forever.
+                return ["sh", "-c", 'while "$1" "$2"; do :; done', "sh",
+                        name, path]
+        return None
+
+    def play(self, name, loop=False):
+        self.stop()
+        path = os.path.join(self.assets, name)
+        if not os.path.exists(path):
+            return
+        argv = self.command(path, loop)
+        if not argv:
+            return
+        try:
+            # Its own session, so stopping the music kills the shell loop as
+            # well as the player it started - and a death signal on top, so a
+            # daemon that is killed outright cannot leave the theme playing
+            # over a desktop with no battle on it.
+            self.process = subprocess.Popen(
+                argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True, preexec_fn=die_with_parent)
+        except OSError as error:
+            log("cannot play %s: %s" % (name, error))
+            self.process = None
+
+    def sweep(self):
+        """Kill players left over by an earlier daemon.
+
+        The shell restarts this on every reload, and a SIGKILL skips shutdown
+        entirely. Matching on our own assets directory keeps this to players
+        we started.
+        """
+        try:
+            subprocess.run(["pkill", "-f", os.path.join(self.assets, "battle-")],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=2)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    def stop(self):
+        process, self.process = self.process, None
+        if not process or process.poll() is not None:
+            return
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        except OSError:
+            try:
+                process.terminate()
+            except OSError:
+                pass
+        # Reap it, or every battle leaves a zombie behind for the lifetime of
+        # the shell. This event loop never waits on anything else.
+        try:
+            process.wait(timeout=1)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
+# ------------------------------------------------------------- borrowing the pad
+
+class PadLease:
+    """The gamepad plugin's lending API, from the borrower's side.
+
+    `grab` asks for the controller, `renew` keeps it, `release` gives it back,
+    and in between every button and direction arrives on this socket as one
+    JSON datagram. The lease has a TTL at the far end, so a crash here gives
+    the pad back on its own within a couple of seconds - which is the point of
+    a lease rather than a handover.
+    """
+
+    def __init__(self, path=GAMEPAD_SOCKET, name=CLIENT_NAME):
+        self.path = path
+        self.name = name
+        self.socket = None
+        self.held = False
+        self.renew_at = 0.0
+
+    def open(self):
+        if self.socket:
+            return self.socket
+        try:
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+            client.bind("")             # abstract autobind: a reply can land
+            client.setblocking(False)
+            self.socket = client
+        except OSError as error:
+            log("cannot open a socket for the pad: %s" % error)
+            self.socket = None
+        return self.socket
+
+    def send(self, message):
+        client = self.open()
+        if not client:
+            return False
+        try:
+            client.sendto(message.encode(), self.path)
+            return True
+        except OSError:
+            # The gamepad daemon is not running. That is a normal state, not
+            # an error: this plugin simply has no controller to play with.
+            return False
+
+    def grab(self, now):
+        if self.send("grab " + self.name):
+            self.held = True
+            self.renew_at = now + RENEW_INTERVAL
+            return True
+        return False
+
+    def release(self):
+        if self.held:
+            self.send("release " + self.name)
+        self.held = False
+
+    def tick(self, now):
+        if self.held and now >= self.renew_at:
+            if not self.send("renew " + self.name):
+                self.held = False
+            self.renew_at = now + RENEW_INTERVAL
+
+    def read(self):
+        """Every event waiting on the socket, as dicts."""
+        events = []
+        if not self.socket:
+            return events
+        while True:
+            try:
+                data, _ = self.socket.recvfrom(4096)
+            except (BlockingIOError, OSError):
+                return events
+            try:
+                events.append(json.loads(data.decode(errors="replace")))
+            except ValueError:
+                continue        # not ours, or truncated; the next one will be
+
+    def close(self):
+        self.release()
+        if self.socket:
+            try:
+                self.socket.close()
+            except OSError:
+                pass
+            self.socket = None
+
+
+# ------------------------------------------------------------------- daemon
+
+class Daemon:
+    def __init__(self):
+        self.hypr = Hyprland()
+        self.sound = Sound()
+        # One-shots need a channel of their own: play() stops whatever that
+        # channel is already playing, which is right for the music and wrong
+        # for a hit that has to land over the top of it.
+        self.effects = Sound()
+        self.pad = PadLease()
+        self.selector = selectors.DefaultSelector()
+
+        self.battle = None
+        self.source = "layout"
+        self.rng = random.Random()
+        self.chance = rules.BATTLE_CHANCE
+        self.quiet_until = 0.0
+        self.published = None
+        self.bar_hidden = False
+        # The last collision acted on, so the layout's report and the gamepad
+        # plugin's report of the same one do not both roll the dice.
+        self.last_collision = None
+        self.last_collision_at = 0.0
+
+        self.event_stream = None
+        self.event_buffer = b""
+        self.event_retry = 0.0
+        self.control_socket = None
+        self.pad_registered = False
+
+    # ------------------------------------------------------------ enabled
+
+    @staticmethod
+    def enabled():
+        """The bar widget's switch. Checked before the roll, and it is only a
+        stat() - cheap enough to do on every collision rather than caching a
+        value that a click could make stale."""
+        return not os.path.exists(DISABLED_FLAG)
+
+    def set_enabled(self, wanted):
+        try:
+            if wanted:
+                os.unlink(DISABLED_FLAG)
+            else:
+                os.makedirs(os.path.dirname(DISABLED_FLAG), exist_ok=True)
+                open(DISABLED_FLAG, "w").close()
+        except OSError as error:
+            log("cannot remember the setting: %s" % error)
+        if not wanted and self.battle:
+            # Switching it off mid-fight ends the fight, rather than leaving
+            # one running that the switch says cannot happen.
+            self.battle.flee(time.monotonic())
+            self.publish()
+        self.publish()
+
+    # ------------------------------------------------------------ triggers
+
+    def on_collision(self, payload, now, source="layout"):
+        """A move swapped two windows. Roll for it.
+
+        Both the layout plugin and the gamepad plugin report the same d-pad
+        collision, so the pair is de-duplicated on the payload: whichever
+        arrives first rolls, and the other is ignored. That keeps the odds at
+        one in four per collision rather than one in four per report.
+        """
+        parts = [part.strip() for part in payload.split(",")]
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            return
+        key = tuple(parts[:3])
+        if (self.last_collision == key
+                and now - self.last_collision_at < COLLISION_DEDUP):
+            return
+        self.last_collision = key
+        self.last_collision_at = now
+
+        if self.battle or now < self.quiet_until or not self.enabled():
+            return
+        if not rules.should_battle(self.rng, self.chance):
+            return
+        self.start(parts[0], parts[1],
+                   parts[2] if len(parts) > 2 else "", now, source)
+
+    @staticmethod
+    def window_by_address(address, clients):
+        for client in clients:
+            if str(client.get("address") or "").lower() == address.lower():
+                return client
+        return None
+
+    def monitor_name(self, client):
+        """The monitor a window is on, by name, so the overlay can pick a
+        screen. Hyprland reports it as an id in `clients`."""
+        monitors = self.hypr.query("monitors") or []
+        for monitor in monitors:
+            if monitor.get("id") == client.get("monitor"):
+                return str(monitor.get("name") or "")
+        for monitor in monitors:
+            if monitor.get("focused"):
+                return str(monitor.get("name") or "")
+        return ""
+
+    def start(self, challenger_address, defender_address, direction, now,
+              source="layout"):
+        """Build both creatures and put the overlay up. Never fatal."""
+        try:
+            clients = self.hypr.query("clients") or []
+            challenger = self.window_by_address(challenger_address, clients)
+            defender = self.window_by_address(defender_address, clients)
+            if not challenger or not defender:
+                return
+            fight = rules.Battle(
+                rules.creature(challenger), rules.creature(defender), now,
+                direction=direction, monitor=self.monitor_name(challenger))
+        except Exception as error:
+            log("battle could not start: %s" % error)
+            return
+
+        self.battle = fight
+        self.source = source
+        # Always ask for the controller, even for a battle a keyboard started:
+        # the pad may well be sitting there, and a battle you can finish with
+        # either hand is better than one tied to whichever you began with. A
+        # failed grab simply means keyboard only.
+        self.pad.grab(now)
+        # The bar belongs to the desktop, and for the next minute this is not
+        # the desktop. Left alone if the user already had it hidden.
+        self.bar_hidden = not os.path.exists(BAR_FLAG_PATH)
+        if self.bar_hidden:
+            self.set_bar(False)
+        self.sound.play("battle-theme.wav", loop=True)
+        self.publish()
+
+    def end(self, now):
+        """Take the overlay down and apply the result, once and only once."""
+        fight = self.battle
+        self.battle = None
+        self.quiet_until = now + BATTLE_COOLDOWN
+        self.pad.release()
+        self.sound.stop()
+        self.effects.stop()
+        if self.bar_hidden:
+            self.set_bar(True)
+            self.bar_hidden = False
+        self.publish()
+        if not fight:
+            return
+
+        # The swap already happened when the move landed, so a win needs no
+        # work: the challenger is standing on the contested cell. A loss puts
+        # it back where it came from, which is the same swap run backwards.
+        # Nothing else can happen to either window, whatever the result.
+        if fight.result == "loss" and fight.direction:
+            opposite = {"left": "right", "right": "left",
+                        "up": "down", "down": "up"}.get(fight.direction)
+            if opposite:
+                self.hypr.dispatch('hl.dsp.layout("move %s")' % opposite)
+
+    def set_bar(self, visible):
+        # `omarchy-toggle-bar` takes the state of a flag named `bar-off`, not
+        # the state of the bar: "on" sets the flag and hides the bar, "off"
+        # clears it and brings the bar back.
+        try:
+            subprocess.Popen(["omarchy-toggle-bar", "off" if visible else "on"],
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError as error:
+            log("cannot toggle the bar: %s" % error)
+
+    # -------------------------------------------------------------- input
+
+    def on_pad_event(self, event, now):
+        """One forwarded datagram from the gamepad daemon."""
+        kind = event.get("event")
+        if kind == "grab" and event.get("state") == "revoked":
+            # The pad was taken back - the daemon is stopping, the window
+            # grabbed it, or our lease lapsed. Without a controller there is
+            # no way to play, so the battle ends rather than sitting there.
+            if self.battle:
+                log("pad revoked (%s); ending the battle"
+                    % (event.get("reason") or "no reason given"))
+                self.battle.flee(now)
+                self.publish()
+            return
+        if not self.battle:
+            return
+        if kind == "direction":
+            if self.battle.move_cursor(event.get("direction")):
+                self.effects.play("battle-select.wav")
+                self.publish()
+            return
+        if kind != "button" or not event.get("pressed"):
+            return
+
+        name = event.get("name")
+        if name == "A":
+            changed = self.battle.confirm(now)
+        elif name == "B":
+            # Out of the move list back to FIGHT/RUN, or on with the text.
+            changed = self.battle.back(now) or self.battle.advance(now)
+        elif name in ("Start", "Select"):
+            # The unconditional way out, whatever the odds on RUN say.
+            changed = self.battle.flee(now)
+        else:
+            return
+        if changed:
+            # Every press that did something clicks, before whatever the
+            # change itself sounds like.
+            self.effects.play("battle-select.wav")
+            self.sound_for(self.battle)
+            self.publish()
+
+    def sound_for(self, fight):
+        """Whatever the last change to the battle should sound like."""
+        if fight.phase == "over" and fight.result in ("win", "loss"):
+            if fight.result == "win":
+                # The jingle first, on its own channel, then the fanfare takes
+                # the music over - the same order the games this is imitating
+                # play them in.
+                self.effects.play("battle-levelup.wav")
+            self.sound.play("battle-%s.wav"
+                            % ("victory" if fight.result == "win" else "defeat"))
+        elif fight.effect.startswith("hit-"):
+            self.effects.play("battle-hit.wav")
+
+    def tick_battle(self, now):
+        fight = self.battle
+        if not fight:
+            return
+        try:
+            if fight.tick(now):
+                self.sound_for(fight)
+                self.publish()
+            if fight.finished(now):
+                self.end(now)
+        except Exception as error:
+            # A bug in the rules must not take the daemon with it, and must
+            # not strand the overlay on screen either.
+            log("battle aborted: %s" % error)
+            self.battle = None
+            self.end(now)
+
+    # ------------------------------------------------------------ publish
+
+    def state(self):
+        if not self.battle:
+            return {"active": False, "enabled": self.enabled()}
+        snapshot = self.battle.snapshot()
+        snapshot["enabled"] = True
+        return snapshot
+
+    def publish(self):
+        state = self.state()
+        if state == self.published:
+            return
+        self.published = state
+        try:
+            temporary = STATE_PATH + ".tmp"
+            with open(temporary, "w") as handle:
+                handle.write(json.dumps(state))
+            os.replace(temporary, STATE_PATH)
+        except OSError as error:
+            log("cannot write state: %s" % error)
+
+    def recover(self):
+        """Clean up after a daemon that was killed mid-battle.
+
+        shutdown() puts everything back, but a SIGKILL never reaches it, and
+        the one piece of collateral that outlives the process is the hidden
+        bar. A stale state file saying a battle was running is the only
+        evidence left, so it is what the bar is brought back on.
+        """
+        try:
+            with open(STATE_PATH) as handle:
+                stale = json.load(handle)
+        except (OSError, ValueError):
+            return
+        if stale.get("active"):
+            log("recovering from a battle left behind by an earlier daemon")
+            self.set_bar(True)
+
+    # ------------------------------------------------------------ control
+
+    def handle_command(self, text):
+        parts = text.strip().split()
+        verb = parts[0] if parts else "status"
+        now = time.monotonic()
+
+        if verb == "cancel" and self.battle:
+            self.battle.flee(now)
+            self.publish()
+        elif verb == "stop" and self.battle:
+            # Harder than cancel: tear it down now, no closing line.
+            self.end(now)
+        elif verb == "debug":
+            self.debug(now)
+        elif verb in ("on", "off", "toggle"):
+            self.set_enabled(not self.enabled() if verb == "toggle"
+                             else verb == "on")
+        elif verb == "refresh":
+            # Somebody flipped the flag file behind our back (the menu row
+            # does exactly that, so it still works with no daemon running).
+            # The only thing to do about it is stop a battle that the setting
+            # now says cannot be happening.
+            if self.battle and not self.enabled():
+                self.battle.flee(now)
+            self.publish()
+        elif verb == "key" and self.battle:
+            # The overlay's keyboard, mapped onto the same handlers the
+            # controller goes through, so there is one set of battle controls
+            # rather than two that can drift apart.
+            self.on_key(parts[1] if len(parts) > 1 else "", now)
+        elif verb in ("pick", "advance") and self.battle:
+            # Debug aids, so the overlay can be driven and screenshotted from
+            # a script with no controller in anyone's hands.
+            if verb == "advance":
+                if self.battle.advance(now):
+                    self.publish()
+            else:
+                try:
+                    index = int(parts[1]) if len(parts) > 1 else 0
+                except ValueError:
+                    index = 0
+                if self.battle.phase == "action":
+                    self.battle.cursor = 0
+                    self.battle.confirm(now)
+                if self.battle.play(index, now) or self.battle.advance(now):
+                    self.sound_for(self.battle)
+                    self.publish()
+        return self.state()
+
+    # Keyboard names to the forwarded-controller events they stand in for.
+    KEYS = {
+        "left": ("direction", "l"), "right": ("direction", "r"),
+        "up": ("direction", "u"), "down": ("direction", "d"),
+        "confirm": ("button", "A"), "back": ("button", "B"),
+        "leave": ("button", "Start"),
+    }
+
+    def on_key(self, name, now):
+        mapped = self.KEYS.get(name)
+        if not mapped:
+            return
+        kind, value = mapped
+        if kind == "direction":
+            self.on_pad_event({"event": "direction", "direction": value}, now)
+        else:
+            self.on_pad_event({"event": "button", "name": value,
+                               "pressed": True}, now)
+
+    def debug(self, now):
+        """Force a battle between the focused window and its neighbour.
+
+        It passes no direction, so there is nothing to put back when it ends:
+        a forced battle cannot move anything whichever way it goes. It works
+        without a 2D workspace and without a pad.
+        """
+        if self.battle or not self.enabled():
+            # Off means off, including here. A debug trigger that quietly
+            # ignored the switch would be the one way to get a battle while
+            # the bar widget says none can happen.
+            return
+        active = self.hypr.query("activewindow") or {}
+        clients = self.hypr.query("clients") or []
+        address = str(active.get("address") or "")
+        others = [client for client in clients
+                  if str(client.get("address") or "") != address
+                  and client.get("monitor") == active.get("monitor")
+                  and client.get("mapped")]
+        if not address or not others:
+            return
+        self.start(address, str(others[0].get("address")), "", now)
+
+    # --------------------------------------------------------- event loop
+
+    def bind_control(self):
+        try:
+            os.unlink(SOCKET_PATH)
+        except OSError:
+            pass
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        server.bind(SOCKET_PATH)
+        server.setblocking(False)
+        self.control_socket = server
+        self.selector.register(server, selectors.EVENT_READ, "control")
+
+    def read_control(self):
+        try:
+            data, address = self.control_socket.recvfrom(4096)
+        except (BlockingIOError, OSError):
+            return
+        state = self.handle_command(data.decode(errors="replace"))
+        if address:
+            try:
+                self.control_socket.sendto(json.dumps(state).encode(), address)
+            except OSError:
+                pass
+
+    def connect_events(self):
+        try:
+            stream = self.hypr.events()
+        except OSError as error:
+            log("no Hyprland event socket (%s); retrying" % error)
+            self.event_stream = None
+            self.event_retry = time.monotonic() + 2.0
+            return
+        stream.setblocking(False)
+        self.event_stream = stream
+        self.event_buffer = b""
+        self.selector.register(stream, selectors.EVENT_READ, "hypr")
+
+    def drop_events(self):
+        if not self.event_stream:
+            return
+        try:
+            self.selector.unregister(self.event_stream)
+        except (KeyError, ValueError):
+            pass
+        self.event_stream.close()
+        self.event_stream = None
+        self.event_retry = time.monotonic() + 1.0
+
+    def read_events(self):
+        try:
+            chunk = self.event_stream.recv(8192)
+        except BlockingIOError:
+            return
+        except OSError:
+            chunk = b""
+        if not chunk:
+            self.drop_events()
+            return
+        self.event_buffer += chunk
+        lines = self.event_buffer.split(b"\n")
+        self.event_buffer = lines.pop()
+        now = time.monotonic()
+        for line in lines:
+            name, _, data = line.decode(errors="replace").partition(">>")
+            if name != "custom":
+                continue
+            for event, source in ((PAD_COLLISION_EVENT, "pad"),
+                                  (LAYOUT_COLLISION_EVENT, "layout")):
+                if not data.startswith(event + ","):
+                    continue
+                # A surprise in the payload must not cost the event loop.
+                try:
+                    self.on_collision(data[len(event) + 1:], now, source)
+                except Exception as error:
+                    log("collision ignored: %s" % error)
+                break
+
+    def read_pad(self):
+        now = time.monotonic()
+        for event in self.pad.read():
+            try:
+                self.on_pad_event(event, now)
+            except Exception as error:
+                log("pad event ignored: %s" % error)
+
+    def next_timeout(self, now):
+        deadlines = []
+        if self.battle:
+            deadline = self.battle.deadline()
+            if deadline is not None:
+                deadlines.append(deadline)
+        if self.pad.held:
+            deadlines.append(self.pad.renew_at)
+        if not self.event_stream:
+            deadlines.append(self.event_retry)
+        if not deadlines:
+            return 1.0
+        return max(0.0, min(min(deadlines) - now, 1.0))
+
+    def run(self):
+        set_parent_death_signal()
+        self.bind_control()
+        self.connect_events()
+        self.sound.sweep()
+        self.recover()
+        # Write "no battle" once at startup: the overlay watches this file,
+        # and a watch on a path that does not exist yet never fires.
+        self.publish()
+
+        while True:
+            # The lease socket is opened the first time the pad is asked
+            # for, so it is registered here rather than once at startup.
+            if self.pad.socket and not self.pad_registered:
+                try:
+                    self.selector.register(self.pad.socket,
+                                           selectors.EVENT_READ, "pad")
+                    self.pad_registered = True
+                except (KeyError, ValueError):
+                    pass
+
+            now = time.monotonic()
+            for key, _ in self.selector.select(self.next_timeout(now)):
+                if key.data == "control":
+                    self.read_control()
+                elif key.data == "hypr":
+                    self.read_events()
+                elif key.data == "pad":
+                    self.read_pad()
+
+            now = time.monotonic()
+            self.pad.tick(now)
+            self.tick_battle(now)
+            if not self.event_stream and now >= self.event_retry:
+                self.connect_events()
+
+    def shutdown(self):
+        # A battle must not outlive the daemon: give the pad and the bar back,
+        # stop the music, and clear the file the overlay watches so it cannot
+        # be left holding the keyboard over a desktop with nothing driving it.
+        self.battle = None
+        try:
+            self.end(time.monotonic())
+        except Exception:
+            self.sound.stop()
+            self.effects.stop()
+        self.pad.close()
+        for path in (SOCKET_PATH, STATE_PATH):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
+def die_with_parent():
+    """preexec hook: ask the kernel to SIGTERM this child when we exit."""
+    try:
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0)
+    except (OSError, AttributeError):
+        pass
+
+
+def set_parent_death_signal():
+    """Die with omarchy-shell, so disabling the plugin stops the daemon."""
+    die_with_parent()
+
+
+def already_running():
+    """True when another daemon answers on the control socket."""
+    if not os.path.exists(SOCKET_PATH):
+        return False
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as probe:
+            probe.bind("")          # abstract autobind, so a reply can land
+            probe.settimeout(0.4)
+            probe.sendto(b"status", SOCKET_PATH)
+            probe.recv(4096)
+        return True
+    except OSError:
+        return False
+
+
+def main(argv):
+    for argument in argv[1:]:
+        if argument in ("-h", "--help"):
+            print(__doc__.strip())
+            return 0
+        log("unknown argument: %s" % argument)
+        return 2
+
+    if already_running():
+        log("another daemon is already running")
+        return 0
+
+    daemon = Daemon()
+
+    def stop(*_):
+        daemon.shutdown()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    try:
+        daemon.run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        daemon.shutdown()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
