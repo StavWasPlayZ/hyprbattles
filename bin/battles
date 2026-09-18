@@ -343,6 +343,8 @@ class PadLease:
 class Daemon:
     def __init__(self):
         self.hypr = Hyprland()
+        # Bar toggles still to be reaped; see set_bar.
+        self._bar_toggles = []
         self.sound = Sound()
         # One-shots need a channel of their own: play() stops whatever that
         # channel is already playing, which is right for the music and wrong
@@ -504,10 +506,18 @@ class Daemon:
         # `omarchy-toggle-bar` takes the state of a flag named `bar-off`, not
         # the state of the bar: "on" sets the flag and hides the bar, "off"
         # clears it and brings the bar back.
+        #
+        # Nothing waits on it, so each call would leave a zombie behind for
+        # the life of the daemon - a poor look for the plugin that counts
+        # zombies as food. Poll the previous ones on the way past, which
+        # reaps the finished without ever blocking.
+        self._bar_toggles = [child for child in self._bar_toggles
+                             if child.poll() is None]
         try:
-            subprocess.Popen(["omarchy-toggle-bar", "off" if visible else "on"],
-                             stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
+            self._bar_toggles.append(subprocess.Popen(
+                ["omarchy-toggle-bar", "off" if visible else "on"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, start_new_session=True))
         except OSError as error:
             log("cannot toggle the bar: %s" % error)
 

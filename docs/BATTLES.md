@@ -371,12 +371,10 @@ plugin knows about it.
 What you put there, and whether you have the right to, is between you and
 whoever wrote it; nothing under that directory can reach the repository.
 
-There is no PP and there is no healing, so there is nothing for a
-"PP restore" or "HP restore" sound to play on. Moves have power and accuracy
-but unlimited uses, and no creature ever gains HP back during a fight. Adding
-either would mean adding the mechanic first - an item menu beside `FIGHT` and
-`RUN`, and longer battles to go with it - which is a bigger change than a
-sound file.
+Healing has a sound because it has a mechanic: `battle-heal.wav` plays when a
+creature is fed from the pantry, and `battle-levelup.wav` when a meal takes it
+up a level. There is still no PP - moves have power and accuracy but unlimited
+uses - so nothing would ever play a "PP restore", and there is no such file.
 
 The player is the first of `mpv`, `pw-play`, `paplay` and `aplay` that is
 installed. With none of them, battles are silent rather than refused.
