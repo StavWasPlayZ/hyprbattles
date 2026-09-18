@@ -275,7 +275,35 @@ def battle_seed(first_address, second_address):
 
 # The top-level choice, in front of the move list, the way the games this is
 # imitating do it: you decide whether to fight at all before you decide how.
-ACTIONS = ("FIGHT", "RUN")
+ACTIONS = ("FIGHT", "ITEM", "RUN")
+
+# Eating
+#
+# Food is a real reading off the machine (lib/pantry.py) rather than a stash,
+# so a battle is handed a larder to ask rather than a list to hold. A meal
+# heals a fraction of the creature's own maximum HP, so a big window and a
+# small one both get something that means something, and it costs the turn:
+# the other window gets a free swing while you are chewing.
+#
+# Nourishment accumulates across the battle, and a creature that has eaten
+# enough of it goes up a level. That is the one way a creature gets stronger
+# mid-fight, and it is what the level-up sting has been waiting for.
+NOURISH_PER_LEVEL = 60
+LEVEL_UP_HP = 8             # maximum HP gained with a level
+LEVEL_UP_STAT = 2           # and each of attack, defense and speed
+
+
+class NoLarder:
+    """The pantry when there is nothing to ask - tests, or a machine whose
+    /proc is not where it should be. Every shelf is bare, and ITEM says so."""
+
+    @staticmethod
+    def stock(now=None):
+        return []
+
+    @staticmethod
+    def take(key, now=None):
+        return None
 
 # Running away always works before the first blow is struck - walking into
 # something and immediately deciding against it should never be punished. Once
@@ -310,16 +338,20 @@ class Battle:
     """The state machine. Every public method returns True when something
     changed, so the caller knows when to publish a new snapshot."""
 
-    def __init__(self, player, foe, now, rng=None, direction="", monitor=""):
+    def __init__(self, player, foe, now, rng=None, direction="", monitor="",
+                 larder=None):
         self.player = player
         self.foe = foe
         self.direction = direction
         self.monitor = monitor
+        # Where food comes from. Asked, never held: see lib/pantry.py.
+        self.larder = larder if larder is not None else NoLarder()
         self.rng = rng or random.Random(
             battle_seed(player.get("address"), foe.get("address")))
 
-        # intro | action | menu | resolve | over. `action` is the FIGHT/RUN
-        # menu the fight opens on; `menu` is the move list behind FIGHT.
+        # intro | action | menu | item | resolve | over. `action` is the
+        # FIGHT/ITEM/RUN menu the fight opens on; `menu` is the move list
+        # behind FIGHT, and `item` the pantry behind ITEM.
         self.phase = "intro"
         self.result = ""            # win | loss | draw, once phase is over
         self.cursor = 0
@@ -328,6 +360,10 @@ class Battle:
         self.effect = ""            # hit-foe | hit-player | faint-foe | ...
         self.turn = 0
         self.run_attempts = 0
+        # What is on the shelves, read when ITEM is opened, and how much the
+        # challenger has eaten so far this battle.
+        self.shelves = []
+        self.fed = 0
         self.seq = 0
         self.started_at = now
         self.next_at = now + TEXT_DWELL
@@ -378,8 +414,8 @@ class Battle:
 
     @property
     def choosing(self):
-        """Either menu is up, so the battle is waiting on the player."""
-        return self.phase in ("action", "menu")
+        """A menu is up, so the battle is waiting on the player."""
+        return self.phase in ("action", "menu", "item")
 
     def moves(self):
         return self.player["moves"]
@@ -393,32 +429,36 @@ class Battle:
         2x2 grid where left and right pick the column.
         """
         if self.phase == "action":
-            if direction == "u":
-                cursor = 0
-            elif direction == "d":
-                cursor = len(ACTIONS) - 1
-            else:
-                return False
-            if cursor == self.cursor:
-                return False
-            self.cursor = cursor
-            self.seq += 1
-            return True
+            return self._grid_cursor(direction, len(ACTIONS))
+        if self.phase == "item":
+            return self._grid_cursor(direction, len(self.shelves))
         if self.phase != "menu":
             return False
-        column, row = self.cursor % 2, self.cursor // 2
+        return self._grid_cursor(direction, len(self.moves()))
+
+    def _grid_cursor(self, direction, count, columns=2):
+        """A two-column grid, walked one cell at a time in all four directions.
+
+        The action menu, the move list and the pantry are all laid out this
+        way, so the same hand movement means the same thing everywhere. A grid
+        that does not divide evenly has a hole in the last row, and the cursor
+        refuses to move into it rather than wrapping somewhere surprising.
+        """
+        column, row = self.cursor % columns, self.cursor // columns
         if direction == "l":
-            column = 0
+            column -= 1
         elif direction == "r":
-            column = 1
+            column += 1
         elif direction == "u":
-            row = 0
+            row -= 1
         elif direction == "d":
-            row = 1
+            row += 1
         else:
             return False
-        cursor = row * 2 + column
-        if cursor == self.cursor or cursor >= len(self.moves()):
+        if column < 0 or column >= columns or row < 0:
+            return False
+        cursor = row * columns + column
+        if cursor == self.cursor or not 0 <= cursor < count:
             return False
         self.cursor = cursor
         self.seq += 1
@@ -427,8 +467,11 @@ class Battle:
     def confirm(self, now):
         """A on the pad: take the highlighted option, or advance the text."""
         if self.phase == "action":
-            if ACTIONS[self.cursor] == "RUN":
+            chosen = ACTIONS[self.cursor]
+            if chosen == "RUN":
                 return self.try_run(now)
+            if chosen == "ITEM":
+                return self.open_pantry(now)
             # FIGHT: open the move list.
             self.phase = "menu"
             self.cursor = 0
@@ -437,6 +480,8 @@ class Battle:
             return True
         if self.phase == "menu":
             return self.play(self.cursor, now)
+        if self.phase == "item":
+            return self.eat(self.cursor, now)
         return self.advance(now)
 
     def try_run(self, now):
@@ -461,14 +506,138 @@ class Battle:
         return True
 
     def back(self, now):
-        """B on the pad: out of the move list, back to FIGHT/RUN."""
-        if self.phase != "menu":
+        """B on the pad: out of a submenu, back to FIGHT/ITEM/RUN."""
+        if self.phase not in ("menu", "item"):
             return False
         self.phase = "action"
         self.cursor = 0
         self.next_at = now + MENU_TIMEOUT
         self.seq += 1
         return True
+
+    # --------------------------------------------------------------- eating
+
+    def open_pantry(self, now):
+        """ITEM: take a live reading of the machine and show what is spare."""
+        if self.phase != "action":
+            return False
+        try:
+            self.shelves = list(self.larder.stock(now))
+        except Exception:
+            # A pantry that cannot be read is an empty one, never a crash.
+            self.shelves = []
+        self.phase = "item"
+        self.cursor = 0
+        self.next_at = now + MENU_TIMEOUT
+        self.seq += 1
+        return True
+
+    def eat(self, index, now):
+        """Feed the highlighted shelf to the challenger, and lose the turn."""
+        if self.phase != "item":
+            return False
+        if not 0 <= index < len(self.shelves):
+            return False
+        shelf = self.shelves[index]
+
+        if shelf.get("servings", 0) <= 0:
+            # Nothing there. Say so and stay in the menu rather than burning
+            # a turn on an empty shelf.
+            self.message = "There is no %s spare." % shelf["name"]
+            self.effect = ""
+            self.seq += 1
+            return True
+
+        # The larder writes the ledger; it can still refuse if the reading
+        # moved between opening the menu and choosing.
+        serving = None
+        try:
+            serving = self.larder.take(shelf["key"], now)
+        except Exception:
+            serving = None
+        if not serving:
+            self.message = "The %s went before you could take it." % shelf["name"]
+            self.effect = ""
+            self.seq += 1
+            return True
+
+        self.phase = "resolve"
+        self.turn += 1
+        self._serve(serving)
+
+        # Eating costs the turn: the other window gets a free swing.
+        if self.player["hp"] > 0 and self.foe["hp"] > 0:
+            self._resolve(self.foe, self.player, moves_choice(self.foe, self.rng),
+                          "player", self.player["hp"])
+        self._pop(now)
+        return True
+
+    def _serve(self, shelf):
+        """Queue what one portion does. Heals, then whatever else it is."""
+        name = shelf["name"]
+        self._say("%s ate the %s!" % (self.player["name"], name))
+
+        healed = self._heal_for(shelf)
+        if healed > 0:
+            self._say("", "heal-player", self._restore(self.player, healed),
+                      HIT_DWELL)
+            self._say("%s recovered %d HP!" % (self.player["name"], healed))
+        else:
+            self._say("...nothing happened.")
+
+        penalty = shelf.get("penalty")
+        if penalty:
+            self._say("%s is weighed down." % self.player["name"],
+                      apply=self._adjust(penalty, -1))
+        boon = shelf.get("boon")
+        if boon:
+            self._say("%s feels fiercer!" % self.player["name"],
+                      apply=self._adjust(boon, 1))
+
+        self.fed += int(shelf.get("nourish", 0))
+        while self.fed >= NOURISH_PER_LEVEL:
+            self.fed -= NOURISH_PER_LEVEL
+            self._say("%s grew to level %d!" % (self.player["name"],
+                                                self.player["level"] + 1),
+                      "level-up", self._level_up())
+
+    def _heal_for(self, shelf):
+        """How much one portion restores.
+
+        Everything but candy is what it says on the shelf. Candy is entropy,
+        so it does what entropy does: sometimes a lot, sometimes nothing, and
+        occasionally it disagrees with you.
+        """
+        fraction = float(shelf.get("heal", 0.0))
+        if shelf.get("kind") == "candy":
+            fraction *= self.rng.choice((0.0, 0.5, 1.0, 1.5, 2.0))
+        missing = self.player["maxHp"] - self.player["hp"]
+        return min(missing, int(self.player["maxHp"] * fraction))
+
+    def _restore(self, target, amount):
+        def apply():
+            target["hp"] = min(target["maxHp"], target["hp"] + amount)
+        return apply
+
+    def _adjust(self, change, sign):
+        """A lasting stat change for the rest of the battle. Floors at 1, so
+        nothing can be eaten into uselessness."""
+        stat = change["stat"]
+        fraction = float(change["fraction"]) * sign
+
+        def apply():
+            current = self.player[stat]
+            self.player[stat] = max(1, int(round(current * (1.0 + fraction))))
+        return apply
+
+    def _level_up(self):
+        def apply():
+            self.player["level"] += 1
+            self.player["maxHp"] += LEVEL_UP_HP
+            self.player["hp"] += LEVEL_UP_HP
+            for stat in ("attack", "defense", "speed"):
+                self.player[stat] += LEVEL_UP_STAT
+        return apply
 
     def advance(self, now):
         """Show the next line early, or leave the text phase when it is done."""
@@ -611,8 +780,18 @@ class Battle:
             "direction": self.direction,
             "menu": self.phase == "menu",
             "action": self.phase == "action",
+            "item": self.phase == "item",
             "actions": list(ACTIONS),
             "runAttempts": self.run_attempts,
+            "fed": self.fed,
+            "nourishPerLevel": NOURISH_PER_LEVEL,
+            "shelves": [
+                {"key": shelf["key"], "name": shelf["name"],
+                 "note": shelf["note"], "unit": shelf["unit"],
+                 "kind": shelf["kind"], "portion": shelf["portion"],
+                 "available": shelf["available"], "servings": shelf["servings"]}
+                for shelf in self.shelves
+            ],
             "moves": [
                 {"name": move["name"], "type": move["type"],
                  "power": move["power"]}

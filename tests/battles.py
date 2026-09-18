@@ -12,9 +12,11 @@ What is not covered here is what cannot be: the forwarded controller events
 themselves, which need the gamepad plugin running and a pad plugged in.
 """
 
+import array
 import importlib.machinery
 import importlib.util
 import json
+import math
 import os
 import random
 import re
@@ -22,11 +24,14 @@ import shutil
 import sys
 import tempfile
 import unittest
+import wave
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
 
+import battle_assets as assets                                # noqa: E402
 import battle_rules as battles                                # noqa: E402
+import pantry                                                 # noqa: E402
 
 
 def load_ctl():
@@ -283,7 +288,7 @@ class TurnLoop(unittest.TestCase):
         self.to_the_action_menu(fight)
         self.assertTrue(fight.choosing)
         self.assertFalse(fight.menu_open)
-        self.assertEqual(fight.snapshot()["actions"], ["FIGHT", "RUN"])
+        self.assertEqual(fight.snapshot()["actions"], ["FIGHT", "ITEM", "RUN"])
 
     def test_fight_opens_the_move_list_and_b_backs_out_of_it(self):
         fight = self.fight()
@@ -295,17 +300,31 @@ class TurnLoop(unittest.TestCase):
         # There is nothing to back out of anywhere else.
         self.assertFalse(fight.back(now))
 
-    def test_the_action_cursor_walks_up_and_down(self):
+    def test_the_action_cursor_walks_a_two_by_two_grid(self):
+        # FIGHT ITEM
+        # RUN   -
         fight = self.fight()
         self.to_the_action_menu(fight)
         self.assertEqual(fight.cursor, 0)
+        self.assertTrue(fight.move_cursor("r"))
+        self.assertEqual(fight.cursor, 1, "ITEM")
+        self.assertTrue(fight.move_cursor("l"))
+        self.assertEqual(fight.cursor, 0, "FIGHT")
         self.assertTrue(fight.move_cursor("d"))
-        self.assertEqual(fight.cursor, 1)
-        self.assertFalse(fight.move_cursor("d"))
+        self.assertEqual(fight.cursor, 2, "RUN")
         self.assertTrue(fight.move_cursor("u"))
         self.assertEqual(fight.cursor, 0)
-        # Sideways means nothing in a one-column list.
-        self.assertFalse(fight.move_cursor("l"))
+        self.assertFalse(fight.move_cursor("u"), "already on the top row")
+
+    def test_the_hole_in_the_action_grid_is_not_reachable(self):
+        # Three options in four cells: the fourth is empty, and the cursor
+        # must refuse it rather than landing on nothing.
+        fight = self.fight()
+        self.to_the_action_menu(fight)
+        fight.move_cursor("d")
+        self.assertEqual(fight.cursor, 2, "RUN")
+        self.assertFalse(fight.move_cursor("r"), "no fourth option")
+        self.assertEqual(fight.cursor, 2)
 
     def test_every_battle_ends_with_a_result(self):
         for seed in range(12):
@@ -573,20 +592,26 @@ class FakeSound:
 
 
 class FakePad:
-    def __init__(self):
+    def __init__(self, grabs=True):
         self.grabbed = False
         self.released = 0
         self.socket = None
         self.held = False
+        self.buzzes = []
+        self._grabs = grabs
 
     def grab(self, now):
-        self.grabbed = True
-        self.held = True
-        return True
+        self.grabbed = self._grabs
+        self.held = self._grabs
+        return self._grabs
 
     def release(self):
         self.released += 1
         self.held = False
+
+    def rumble(self, strong, weak, milliseconds):
+        self.buzzes.append((strong, weak, milliseconds))
+        return True
 
 
 class CollisionGate(unittest.TestCase):
@@ -699,6 +724,50 @@ class CollisionGate(unittest.TestCase):
         self.assertIsNotNone(bd.Daemon.window_by_address("0x601af8", clients))
         self.assertIsNotNone(bd.Daemon.window_by_address("0xDEAD", clients))
         self.assertIsNone(bd.Daemon.window_by_address("0xmissing", clients))
+
+
+class EncounterRumble(unittest.TestCase):
+    """A battle opening should be felt, not just seen. The motors live in the
+    gamepad plugin, so this is an ask over its socket rather than a write."""
+
+    def daemon(self, pad):
+        daemon = bd.Daemon.__new__(bd.Daemon)
+        daemon.sound = FakeSound()
+        daemon.effects = FakeSound()
+        daemon.pad = pad
+        daemon.battle = None
+        daemon.source = None
+        daemon.published = None
+        daemon.publish = lambda: None
+        daemon.pantry = None
+        daemon.bar_hidden = False
+        daemon.set_bar = lambda visible: None
+        daemon.monitor_name = lambda client: "DP-4"
+        daemon.hypr = type("Q", (), {"query": staticmethod(
+            lambda what: [window("0x10", "foot"), window("0x20", "firefox")])})()
+        return daemon
+
+    def test_a_battle_starting_asks_for_a_second_at_full(self):
+        pad = FakePad()
+        daemon = self.daemon(pad)
+        daemon.start("0x10", "0x20", "left", 0.0, source="pad")
+        self.assertIsNotNone(daemon.battle)
+        self.assertEqual(pad.buzzes, [(1.0, 1.0, bd.ENCOUNTER_RUMBLE_MS)])
+
+    def test_it_is_asked_for_even_when_the_lease_is_refused(self):
+        # A keyboard battle, or a pad lent elsewhere: the buzz is harmless and
+        # the controller may well still be in reach.
+        pad = FakePad(grabs=False)
+        daemon = self.daemon(pad)
+        daemon.start("0x10", "0x20", "left", 0.0, source="keyboard")
+        self.assertEqual(pad.buzzes, [(1.0, 1.0, bd.ENCOUNTER_RUMBLE_MS)])
+
+    def test_nothing_buzzes_when_the_battle_cannot_start(self):
+        pad = FakePad()
+        daemon = self.daemon(pad)
+        daemon.start("0x10", "0xmissing", "left", 0.0, source="pad")
+        self.assertIsNone(daemon.battle)
+        self.assertEqual(pad.buzzes, [])
 
 
 class BattleInput(unittest.TestCase):
@@ -938,8 +1007,11 @@ class TheMenuRow(unittest.TestCase):
         self.ctl.nudge()
 
     def test_the_offline_verbs_are_the_ones_that_need_no_daemon(self):
+        # `assets` is here too: which file a sound comes from is a setting and
+        # a pair of directories, so it can be read and changed with the shell
+        # down, exactly like the on/off flag.
         self.assertEqual(set(self.ctl.OFFLINE),
-                         {"enabled", "on", "off", "toggle"})
+                         {"enabled", "on", "off", "toggle", "assets"})
         for verb in self.ctl.OFFLINE:
             self.assertIn(verb, self.ctl.COMMANDS)
 
@@ -950,6 +1022,479 @@ class TheMenuRow(unittest.TestCase):
         self.assertEqual(fresh.DISABLED_FLAG, bd.DISABLED_FLAG)
 
 
+# --------------------------------------------------------------------- food
+#
+# The hard constraint is that the pantry is read-only: it reads counters and
+# sizes and changes nothing. These tests run it against fixture files, so the
+# readings are known, and against the real machine, so the shape is right.
+
+class Readings(unittest.TestCase):
+    """Reading the machine. Fixtures, so the numbers are known."""
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def write(self, name, text):
+        path = os.path.join(self.directory, name)
+        with open(path, "w") as handle:
+            handle.write(text)
+        return path
+
+    def test_meminfo_is_parsed_as_kilobytes(self):
+        path = self.write("meminfo", "MemTotal:  32625496 kB\n"
+                                     "MemAvailable: 15524760 kB\n"
+                                     "Cached:    13412676 kB\n")
+        values = pantry.read_meminfo(path)
+        self.assertEqual(values["MemAvailable"], 15524760.0)
+        self.assertEqual(values["Cached"], 13412676.0)
+
+    def test_a_meminfo_that_is_not_there_is_empty_not_fatal(self):
+        self.assertEqual(pantry.read_meminfo("/nonexistent/meminfo"), {})
+
+    def test_a_line_that_makes_no_sense_is_skipped(self):
+        path = self.write("meminfo", "Good: 12 kB\nBroken: not-a-number kB\n"
+                                     "NoColonHere\n")
+        values = pantry.read_meminfo(path)
+        self.assertEqual(values.get("Good"), 12.0)
+        self.assertNotIn("Broken", values)
+
+    def test_entropy_is_a_number(self):
+        self.assertEqual(pantry.read_entropy(self.write("entropy", "256\n")), 256.0)
+        self.assertEqual(pantry.read_entropy("/nonexistent"), 0.0)
+        self.assertEqual(pantry.read_entropy(self.write("junk", "hello")), 0.0)
+
+    def test_zombies_are_counted_from_the_state_field(self):
+        # The comm field is parenthesised and may contain spaces and brackets,
+        # so the state is whatever follows the *last* close parenthesis.
+        for pid, comm, state in (("1", "systemd", "S"), ("2", "a (odd) name", "Z"),
+                                 ("3", "kworker", "Z"), ("4", "bash", "R")):
+            os.makedirs(os.path.join(self.directory, pid))
+            self.write(os.path.join(pid, "stat"),
+                       "%s (%s) %s 1 1 0 0\n" % (pid, comm, state))
+        os.makedirs(os.path.join(self.directory, "not-a-pid"))
+        self.assertEqual(pantry.count_zombies(self.directory), 2)
+
+    def test_zombie_counting_survives_a_process_that_vanishes(self):
+        os.makedirs(os.path.join(self.directory, "999"))   # no stat file
+        self.assertEqual(pantry.count_zombies(self.directory), 0)
+
+    def test_used_bytes_comes_from_statvfs(self):
+        self.assertGreater(pantry.used_bytes("/"), 0)
+        self.assertEqual(pantry.used_bytes("/nonexistent"), 0.0)
+
+    def test_the_real_machine_fills_every_shelf_shape(self):
+        # Not the values - those move - but that each shelf reads a number.
+        larder = pantry.Pantry(ledger=pantry.Ledger())
+        for shelf in larder.stock():
+            self.assertIsInstance(shelf["available"], float)
+            self.assertGreaterEqual(shelf["available"], 0.0)
+            self.assertGreaterEqual(shelf["servings"], 0)
+            self.assertTrue(shelf["name"])
+            self.assertTrue(shelf["note"])
+
+    def test_nothing_in_the_pantry_writes_outside_its_ledger(self):
+        # The constraint this whole feature rests on. If a future shelf
+        # reaches for a write, an unlink or a signal, this fails.
+        with open(os.path.join(ROOT, "lib", "pantry.py")) as handle:
+            source = handle.read()
+        for forbidden in ("os.unlink", "os.remove", "os.kill", "shutil.rmtree",
+                          "subprocess", "sudo", "drop_caches", "truncate"):
+            self.assertNotIn(forbidden, source, forbidden)
+        # One write, and it is the ledger's own save().
+        self.assertEqual(source.count('open(temporary, "w")'), 1)
+
+
+class TheLedger(unittest.TestCase):
+    """What stops the same 512 MiB feeding a creature forever."""
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.path = os.path.join(self.directory, "pantry.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def test_an_eaten_portion_is_outstanding_straight_away(self):
+        ledger = pantry.Ledger(self.path)
+        ledger.take("staple", 512.0, 1000.0)
+        self.assertAlmostEqual(ledger.outstanding("staple", 1000.0), 512.0)
+
+    def test_it_grows_back_smoothly(self):
+        ledger = pantry.Ledger(self.path)
+        ledger.take("staple", 512.0, 1000.0)
+        half = 1000.0 + pantry.REGEN_SECONDS / 2
+        self.assertAlmostEqual(ledger.outstanding("staple", half), 256.0, places=3)
+
+    def test_it_is_fully_back_after_the_regen_window(self):
+        ledger = pantry.Ledger(self.path)
+        ledger.take("staple", 512.0, 1000.0)
+        later = 1000.0 + pantry.REGEN_SECONDS + 1
+        self.assertEqual(ledger.outstanding("staple", later), 0.0)
+
+    def test_shelves_do_not_borrow_from_each_other(self):
+        ledger = pantry.Ledger(self.path)
+        ledger.take("staple", 512.0, 1000.0)
+        self.assertEqual(ledger.outstanding("candy", 1000.0), 0.0)
+
+    def test_a_clock_that_goes_backwards_does_not_refund(self):
+        ledger = pantry.Ledger(self.path)
+        ledger.take("staple", 512.0, 1000.0)
+        self.assertAlmostEqual(ledger.outstanding("staple", 900.0), 512.0)
+
+    def test_it_survives_a_restart(self):
+        first = pantry.Ledger(self.path)
+        first.take("staple", 512.0, 1000.0)
+        second = pantry.Ledger(self.path)
+        self.assertAlmostEqual(second.outstanding("staple", 1000.0), 512.0)
+
+    def test_a_corrupt_ledger_is_ignored_rather_than_fatal(self):
+        with open(self.path, "w") as handle:
+            handle.write("{not json at all")
+        ledger = pantry.Ledger(self.path)
+        self.assertEqual(ledger.entries, [])
+
+    def test_entries_that_make_no_sense_are_dropped(self):
+        with open(self.path, "w") as handle:
+            json.dump({"entries": [{"key": "staple", "amount": 1, "at": 2},
+                                   {"key": "broken"},
+                                   "not a dict",
+                                   {"key": "x", "amount": "nope", "at": 0}]},
+                      handle)
+        ledger = pantry.Ledger(self.path)
+        self.assertEqual(len(ledger.entries), 1)
+
+    def test_pruning_forgets_what_has_grown_back(self):
+        ledger = pantry.Ledger(self.path)
+        ledger.take("staple", 512.0, 1000.0)
+        ledger.prune(1000.0 + pantry.REGEN_SECONDS + 1)
+        self.assertEqual(ledger.entries, [])
+
+    def test_a_ledger_with_no_path_still_works_in_memory(self):
+        ledger = pantry.Ledger()
+        ledger.take("staple", 512.0, 1000.0)
+        self.assertAlmostEqual(ledger.outstanding("staple", 1000.0), 512.0)
+
+
+class ThePantry(unittest.TestCase):
+    """Live readings minus the ledger, against fixed fixtures."""
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        meminfo = os.path.join(self.directory, "meminfo")
+        with open(meminfo, "w") as handle:
+            handle.write("MemAvailable: 2097152 kB\n"     # 2048 MiB
+                         "Cached:       4194304 kB\n"     # 4096 MiB
+                         "SwapTotal:    2097152 kB\n"
+                         "SwapFree:     1048576 kB\n")    # 1024 MiB in use
+        entropy = os.path.join(self.directory, "entropy")
+        with open(entropy, "w") as handle:
+            handle.write("256\n")
+        self.roots = {"meminfo": meminfo, "entropy": entropy,
+                      "proc": self.directory, "tmp": "/"}
+        self.clock = [1000.0]
+        self.larder = pantry.Pantry(ledger=pantry.Ledger(),
+                                    roots=self.roots,
+                                    clock=lambda: self.clock[0])
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def shelf(self, key):
+        return next(s for s in self.larder.stock() if s["key"] == key)
+
+    def test_the_staple_reads_memavailable(self):
+        self.assertAlmostEqual(self.shelf("staple")["available"], 2048.0)
+        self.assertEqual(self.shelf("staple")["servings"], 4)   # 512 MiB each
+
+    def test_swap_in_use_is_total_minus_free(self):
+        self.assertAlmostEqual(self.shelf("junk")["available"], 1024.0)
+
+    def test_eating_takes_it_off_the_shelf(self):
+        self.assertEqual(self.shelf("staple")["servings"], 4)
+        serving = self.larder.take("staple")
+        self.assertIsNotNone(serving)
+        self.assertAlmostEqual(self.shelf("staple")["available"], 1536.0)
+        self.assertEqual(self.shelf("staple")["servings"], 3)
+
+    def test_the_machine_reading_itself_never_changes(self):
+        # The whole point: eating moves the ledger, not the machine.
+        before = pantry.read_meminfo(self.roots["meminfo"])
+        for _ in range(4):
+            self.larder.take("staple")
+        after = pantry.read_meminfo(self.roots["meminfo"])
+        self.assertEqual(before, after)
+
+    def test_a_bare_shelf_refuses(self):
+        for _ in range(4):
+            self.assertIsNotNone(self.larder.take("staple"))
+        self.assertIsNone(self.larder.take("staple"), "nothing left")
+
+    def test_it_comes_back(self):
+        for _ in range(4):
+            self.larder.take("staple")
+        self.assertIsNone(self.larder.take("staple"))
+        self.clock[0] += pantry.REGEN_SECONDS + 1
+        self.assertIsNotNone(self.larder.take("staple"), "grown back")
+
+    def test_you_cannot_eat_what_the_machine_does_not_have(self):
+        with open(self.roots["meminfo"], "w") as handle:
+            handle.write("MemAvailable: 1024 kB\n")     # 1 MiB, not a portion
+        self.assertIsNone(self.larder.take("staple"))
+        self.assertEqual(self.shelf("staple")["servings"], 0)
+
+    def test_an_unknown_shelf_is_not_food(self):
+        self.assertIsNone(self.larder.take("sandwich"))
+
+    def test_the_ledger_ignores_the_callers_monotonic_clock(self):
+        # The battle hands the pantry a monotonic `now`, which counts from an
+        # arbitrary zero and restarts at boot. The ledger is on disk and keeps
+        # wall-clock time, so it must use its own clock: writing a monotonic
+        # number into it would make every entry look like it was eaten in the
+        # future after a reboot, and nothing would ever grow back.
+        self.larder.take("staple", 5.0)          # a battle's monotonic clock
+        entry = self.larder.ledger.entries[-1]
+        self.assertEqual(entry["at"], 1000.0, "the pantry's own clock, not 5.0")
+
+        self.clock[0] += pantry.REGEN_SECONDS + 1
+        self.assertEqual(self.larder.ledger.outstanding("staple", self.clock[0]),
+                         0.0, "and it still grows back")
+
+    def test_stock_also_ignores_the_callers_clock(self):
+        for _ in range(4):
+            self.larder.take("staple")
+        self.assertEqual(self.shelf("staple")["servings"], 0)
+        self.clock[0] += pantry.REGEN_SECONDS + 1
+        # Passing a stale monotonic number must not resurrect or freeze it.
+        shelves = self.larder.stock(0.0)
+        staple = next(s for s in shelves if s["key"] == "staple")
+        self.assertEqual(staple["servings"], 4)
+
+    def test_a_reading_that_throws_is_an_empty_shelf(self):
+        broken = dict(pantry.SHELVES[0])
+        broken["reading"] = lambda roots: 1 / 0
+        self.assertEqual(self.larder.available(broken), 0.0)
+
+    def test_every_shelf_is_listed_even_when_bare(self):
+        for _ in range(4):
+            self.larder.take("staple")
+        names = [shelf["key"] for shelf in self.larder.stock()]
+        self.assertEqual(len(names), len(pantry.SHELVES))
+        self.assertIn("staple", names)
+
+    def test_describe_is_readable(self):
+        self.assertEqual(pantry.describe(512, "MiB"), "512 MiB")
+        self.assertEqual(pantry.describe(2048, "MiB"), "2.0 GiB")
+        self.assertEqual(pantry.describe(256, "bits"), "256 bits")
+        self.assertEqual(pantry.describe(6, ""), "6")
+
+
+class Eating(unittest.TestCase):
+    """The ITEM option, in the turn loop."""
+
+    class FakeLarder:
+        def __init__(self, servings=2):
+            self.shelf = {
+                "key": "staple", "name": "FREE RAM", "note": "n", "unit": "MiB",
+                "kind": "plain", "portion": 512.0, "available": 512.0 * servings,
+                "servings": servings, "heal": 0.30, "nourish": 34,
+                "penalty": None, "boon": None,
+            }
+            self.taken = []
+
+        def stock(self, now=None):
+            return [dict(self.shelf)]
+
+        def take(self, key, now=None):
+            if key != self.shelf["key"] or self.shelf["servings"] <= 0:
+                return None
+            self.shelf["servings"] -= 1
+            self.taken.append(key)
+            return dict(self.shelf)
+
+    def fight(self, larder=None, seed=1):
+        return battles.Battle(battles.creature(window("0x10", "foot")),
+                              battles.creature(window("0x20", "firefox")),
+                              0.0, rng=random.Random(seed),
+                              larder=larder or self.FakeLarder())
+
+    def at_the_action_menu(self, fight):
+        now = 0.0
+        while fight.phase != "action" and now < 30:
+            now += 0.1
+            fight.tick(now)
+        return now
+
+    def open_pantry(self, fight):
+        now = self.at_the_action_menu(fight)
+        fight.cursor = battles.ACTIONS.index("ITEM")
+        self.assertTrue(fight.confirm(now))
+        self.assertEqual(fight.phase, "item")
+        return now
+
+    def test_item_sits_between_fight_and_run(self):
+        self.assertEqual(battles.ACTIONS, ("FIGHT", "ITEM", "RUN"))
+
+    def test_opening_the_pantry_reads_the_shelves(self):
+        fight = self.fight()
+        self.open_pantry(fight)
+        self.assertEqual(len(fight.shelves), 1)
+        self.assertEqual(fight.snapshot()["shelves"][0]["name"], "FREE RAM")
+        self.assertTrue(fight.snapshot()["item"])
+
+    def test_the_pantry_cursor_walks_a_two_column_grid(self):
+        # 0 1
+        # 2 3
+        # 4 -
+        larder = self.FakeLarder()
+        larder.stock = lambda now=None: [dict(larder.shelf) for _ in range(5)]
+        fight = self.fight(larder)
+        self.open_pantry(fight)
+        self.assertFalse(fight.move_cursor("u"), "already on the top row")
+        self.assertFalse(fight.move_cursor("l"), "already in the left column")
+        self.assertTrue(fight.move_cursor("r"))
+        self.assertEqual(fight.cursor, 1)
+        self.assertTrue(fight.move_cursor("d"))
+        self.assertEqual(fight.cursor, 3)
+        self.assertTrue(fight.move_cursor("l"))
+        self.assertEqual(fight.cursor, 2)
+        self.assertTrue(fight.move_cursor("d"))
+        self.assertEqual(fight.cursor, 4)
+        self.assertFalse(fight.move_cursor("r"), "the last row has a hole")
+        self.assertFalse(fight.move_cursor("d"), "and nothing below it")
+
+    def test_b_backs_out_of_the_pantry(self):
+        fight = self.fight()
+        now = self.open_pantry(fight)
+        self.assertTrue(fight.back(now))
+        self.assertEqual(fight.phase, "action")
+
+    def test_eating_heals_and_costs_the_turn(self):
+        fight = self.fight()
+        now = self.open_pantry(fight)
+        fight.player["hp"] = 10
+        self.assertTrue(fight.eat(0, now))
+        self.assertEqual(fight.phase, "resolve")
+        self.assertEqual(fight.turn, 1, "eating is a turn")
+        # Play the queue out; the heal lands, then the foe swings.
+        for _ in range(20):
+            if not fight.advance(now):
+                break
+            now += 0.1
+        self.assertGreater(fight.player["hp"], 10)
+
+    def test_healing_cannot_go_past_full(self):
+        # Eating on full HP restores nothing - and still costs the turn, so
+        # the foe's free swing is why the HP ends up lower, not higher.
+        fight = self.fight()
+        now = self.open_pantry(fight)
+        fight.player["hp"] = fight.player["maxHp"]
+        self.assertEqual(fight._heal_for({"heal": 0.30, "kind": "plain"}), 0)
+        fight.eat(0, now)
+        # Collect the narration as it plays, rather than after the queue has
+        # drained and the menu prompt has replaced it.
+        said = [fight.message]
+        for _ in range(20):
+            if not fight.advance(now):
+                break
+            said.append(fight.message)
+            now += 0.1
+        self.assertLessEqual(fight.player["hp"], fight.player["maxHp"])
+        self.assertTrue(any("nothing happened" in line for line in said), said)
+
+    def test_a_bare_shelf_costs_nothing(self):
+        fight = self.fight(self.FakeLarder(servings=0))
+        now = self.open_pantry(fight)
+        self.assertTrue(fight.eat(0, now), "it says so")
+        self.assertEqual(fight.phase, "item", "and stays in the menu")
+        self.assertEqual(fight.turn, 0, "no turn was spent")
+        self.assertIn("no free ram", fight.message.lower())
+
+    def test_a_shelf_that_empties_between_looking_and_choosing(self):
+        larder = self.FakeLarder(servings=1)
+        fight = self.fight(larder)
+        now = self.open_pantry(fight)
+        larder.shelf["servings"] = 0            # something else ate it
+        self.assertTrue(fight.eat(0, now))
+        self.assertEqual(fight.turn, 0)
+        self.assertIn("went before", fight.message.lower())
+
+    def test_an_out_of_range_shelf_is_refused(self):
+        fight = self.fight()
+        now = self.open_pantry(fight)
+        self.assertFalse(fight.eat(9, now))
+        self.assertFalse(fight.eat(-1, now))
+
+    def test_a_larder_that_throws_is_an_empty_pantry(self):
+        class Broken:
+            def stock(self, now=None):
+                raise RuntimeError("no /proc today")
+
+            def take(self, key, now=None):
+                raise RuntimeError("still no")
+
+        fight = self.fight(Broken())
+        now = self.at_the_action_menu(fight)
+        fight.cursor = battles.ACTIONS.index("ITEM")
+        fight.confirm(now)
+        self.assertEqual(fight.phase, "item")
+        self.assertEqual(fight.shelves, [])
+
+    def test_with_no_larder_at_all_the_pantry_is_bare(self):
+        fight = battles.Battle(battles.creature(window("0x10", "foot")),
+                               battles.creature(window("0x20", "firefox")), 0.0)
+        now = self.at_the_action_menu(fight)
+        fight.cursor = battles.ACTIONS.index("ITEM")
+        fight.confirm(now)
+        self.assertEqual(fight.shelves, [])
+
+    def test_enough_food_levels_a_creature_up(self):
+        larder = self.FakeLarder(servings=20)
+        fight = self.fight(larder)
+        level = fight.player["level"]
+        attack = fight.player["attack"]
+        now = 0.0
+        for _ in range(4):
+            while fight.phase not in ("action", "over"):
+                now += 0.1
+                if not fight.advance(now):
+                    now += 5.0
+                    fight.tick(now)
+            if fight.phase == "over":
+                break
+            fight.cursor = battles.ACTIONS.index("ITEM")
+            fight.confirm(now)
+            fight.player["hp"] = 5
+            fight.eat(0, now)
+        self.assertGreater(fight.player["level"], level)
+        self.assertGreater(fight.player["attack"], attack)
+
+    def test_a_penalty_lowers_a_stat_but_never_below_one(self):
+        fight = self.fight()
+        fight.player["speed"] = 1
+        fight._adjust({"stat": "speed", "fraction": 0.9}, -1)()
+        self.assertGreaterEqual(fight.player["speed"], 1)
+
+    def test_candy_is_a_gamble_and_the_rest_are_not(self):
+        fight = self.fight()
+        fight.player["hp"] = 1
+        plain = {"heal": 0.30, "kind": "plain"}
+        self.assertEqual({fight._heal_for(plain) for _ in range(20)},
+                         {int(fight.player["maxHp"] * 0.30)})
+        candy = {"heal": 0.30, "kind": "candy"}
+        self.assertGreater(len({fight._heal_for(candy) for _ in range(40)}), 1)
+
+    def test_the_snapshot_carries_the_pantry(self):
+        fight = self.fight()
+        self.open_pantry(fight)
+        snapshot = fight.snapshot()
+        for key in ("item", "shelves", "fed", "nourishPerLevel"):
+            self.assertIn(key, snapshot)
+        self.assertEqual(json.loads(json.dumps(snapshot)), snapshot)
+
+
 class Music(unittest.TestCase):
     def test_the_first_available_player_is_used(self):
         argv = bd.Sound.command("/tmp/x.wav", loop=True)
@@ -958,7 +1503,7 @@ class Music(unittest.TestCase):
         self.assertIn("/tmp/x.wav", argv)
 
     def test_a_missing_file_plays_nothing(self):
-        sound = bd.Sound(assets="/nonexistent")
+        sound = bd.Sound(assets="/nonexistent", custom="/nonexistent-too")
         sound.play("battle-theme.wav", loop=True)
         self.assertIsNone(sound.process)
         sound.stop()          # must be safe with nothing playing
@@ -968,10 +1513,194 @@ class Music(unittest.TestCase):
         with open(os.path.join(ROOT, "bin", "battles")) as handle:
             source = handle.read()
         for name in re.findall(r'"(battle-[a-z]+\.wav)"', source):
-            if name == "battle-theme.wav":
-                continue    # supplied locally, deliberately not committed
             self.assertTrue(os.path.exists(os.path.join(ROOT, "assets", name)),
                             name)
+
+    def test_the_daemon_only_asks_for_names_the_generator_makes(self):
+        # Three hand-written lists in three files. If they drift, a sound
+        # either plays from nowhere or goes unaccounted for in `assets`.
+        with open(os.path.join(ROOT, "bin", "battles")) as handle:
+            played = set(re.findall(r'"(battle-[a-z]+\.wav)"', handle.read()))
+        with open(os.path.join(ROOT, "bin", "make-battle-audio")) as handle:
+            made = set(re.findall(r'"(battle-[a-z]+\.wav)"', handle.read()))
+        self.assertTrue(played)
+        self.assertEqual(played - made, set())
+        self.assertEqual(played - set(assets.SOUNDS), set())
+
+
+class Assets(unittest.TestCase):
+    """Which of the two directories a sound comes out of.
+
+    The resolution order is the whole of the generated-versus-custom feature,
+    so it runs against directories made here rather than against whatever
+    happens to be in this machine's config.
+    """
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="battle-assets-")
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.generated = os.path.join(self.root, "generated")
+        self.custom = os.path.join(self.root, "custom")
+        os.makedirs(self.generated)
+        os.makedirs(self.custom)
+        for name in assets.SOUNDS:
+            self.put(self.generated, name)
+
+    def put(self, directory, name, body=b"RIFF"):
+        path = os.path.join(directory, name)
+        with open(path, "wb") as handle:
+            handle.write(body)
+        return path
+
+    def resolve(self, name, which):
+        return assets.resolve(name, which, generated=self.generated,
+                              custom=self.custom, environ={})
+
+    def test_auto_takes_a_custom_file_when_there_is_one(self):
+        mine = self.put(self.custom, "battle-theme.wav")
+        self.assertEqual(self.resolve("battle-theme.wav", "auto"), mine)
+
+    def test_auto_falls_back_per_file_and_not_per_set(self):
+        # Replacing only the theme has to leave the rest alone: it is the
+        # state almost everyone who replaces anything ends up in.
+        self.put(self.custom, "battle-theme.wav")
+        rows = dict((name, source) for name, _, source in assets.resolution(
+            "auto", self.generated, self.custom, environ={}))
+        self.assertEqual(rows["battle-theme.wav"], "custom")
+        for name in assets.SOUNDS:
+            if name != "battle-theme.wav":
+                self.assertEqual(rows[name], "generated", name)
+
+    def test_generated_ignores_a_custom_file_that_is_sitting_there(self):
+        # The A/B position: it has to work without moving anybody's files.
+        self.put(self.custom, "battle-theme.wav")
+        self.assertEqual(self.resolve("battle-theme.wav", "generated"),
+                         os.path.join(self.generated, "battle-theme.wav"))
+
+    def test_custom_is_silent_rather_than_falling_back(self):
+        # Otherwise `custom` and `auto` would be the same mode, and there
+        # would be no way to hear your own set and only your own set.
+        self.put(self.custom, "battle-theme.wav")
+        self.assertEqual(self.resolve("battle-theme.wav", "custom"),
+                         os.path.join(self.custom, "battle-theme.wav"))
+        self.assertIsNone(self.resolve("battle-hit.wav", "custom"))
+
+    def test_a_name_in_neither_directory_resolves_to_nothing(self):
+        self.assertIsNone(self.resolve("battle-nonesuch.wav", "auto"))
+
+    def test_the_environment_overrides_the_saved_mode_for_one_run(self):
+        path = os.path.join(self.root, "battles-assets")
+        with open(path, "w") as handle:
+            handle.write("custom\n")
+        self.assertEqual(assets.mode({}, path), "custom")
+        self.assertEqual(assets.mode({assets.ENV_VAR: "generated"}, path),
+                         "generated")
+        self.assertEqual(assets.saved_mode({}, path), "custom")
+
+    def test_nonsense_in_either_place_reads_as_the_default(self):
+        # A typo in a shell profile or a half-written state file must not take
+        # the sound out; it reads as unset.
+        path = os.path.join(self.root, "battles-assets")
+        with open(path, "w") as handle:
+            handle.write("GENERATED\n")           # case is forgiven
+        self.assertEqual(assets.mode({}, path), "generated")
+        with open(path, "w") as handle:
+            handle.write("whatever\n")
+        self.assertEqual(assets.mode({}, path), "auto")
+        self.assertEqual(assets.mode({assets.ENV_VAR: "custm"}, path), "auto")
+        self.assertEqual(assets.mode({}, os.path.join(self.root, "nope")),
+                         "auto")
+
+    def test_saving_a_mode_round_trips_and_refuses_nonsense(self):
+        path = os.path.join(self.root, "state", "battles-assets")
+        self.assertIsNone(assets.set_mode("custom", {}, path))
+        self.assertEqual(assets.mode({}, path), "custom")
+        self.assertIsNotNone(assets.set_mode("loud", {}, path))
+        self.assertEqual(assets.mode({}, path), "custom")   # left alone
+
+    def test_the_custom_directory_is_outside_the_checkout(self):
+        # A clone has to stay clean however much music is in it.
+        self.assertEqual(assets.custom_dir({"XDG_CONFIG_HOME": "/some/config"}),
+                         "/some/config/omarchy/pokemon-battles/assets")
+        self.assertFalse(assets.custom_dir().startswith(ROOT + os.sep))
+
+    def test_the_daemon_resolves_through_the_same_order(self):
+        # The daemon must not have a copy of any of this.
+        mine = self.put(self.custom, "battle-theme.wav")
+        sound = bd.Sound(assets=self.generated, custom=self.custom)
+        self.addCleanup(os.environ.pop, assets.ENV_VAR, None)
+        os.environ[assets.ENV_VAR] = "auto"
+        self.assertEqual(sound.resolve("battle-theme.wav"), mine)
+        os.environ[assets.ENV_VAR] = "generated"
+        self.assertEqual(sound.resolve("battle-theme.wav"),
+                         os.path.join(self.generated, "battle-theme.wav"))
+        os.environ[assets.ENV_VAR] = "custom"
+        self.assertIsNone(sound.resolve("battle-hit.wav"))
+
+    def test_the_daemon_and_the_cli_agree_on_where_the_mode_lives(self):
+        fresh = load_ctl()
+        self.assertEqual(fresh.battle_assets.mode_path(), assets.mode_path())
+        self.assertEqual(fresh.battle_assets.GENERATED, bd.ASSETS)
+
+
+class GeneratedAudio(unittest.TestCase):
+    """That what ships is really there, really audio, and really audible.
+
+    Nobody can hear a test, so this is the ear: a file that is present but
+    silent, clipped or half written sounds exactly like a bug in the daemon.
+    """
+
+    @staticmethod
+    def samples(name):
+        with wave.open(os.path.join(ROOT, "assets", name)) as handle:
+            block = array.array("h")
+            block.frombytes(handle.readframes(handle.getnframes()))
+            return handle.getframerate(), handle.getnchannels(), block
+
+    def test_every_generated_asset_is_a_playable_wav(self):
+        for name in assets.SOUNDS:
+            rate, channels, block = self.samples(name)
+            self.assertEqual(rate, 22050, name)
+            self.assertEqual(channels, 1, name)
+            self.assertGreater(len(block), rate // 20, name)
+
+    def test_nothing_is_silent_and_nothing_clips(self):
+        for name in assets.SOUNDS:
+            _, _, block = self.samples(name)
+            peak = max(abs(value) for value in block)
+            rms = math.sqrt(sum(float(v) * v for v in block) / len(block))
+            self.assertGreater(peak, 0.2 * 32767, "%s is near silent" % name)
+            self.assertLess(peak, 32767, "%s clips" % name)
+            self.assertGreater(rms, 0.01 * 32767, "%s is near silent" % name)
+
+    def test_the_one_shots_are_short_enough_not_to_trample_each_other(self):
+        # They share one channel, so a new one cuts the last one off. Any
+        # longer than a line of text takes to advance and they would queue up.
+        for name in ("battle-select.wav", "battle-hit.wav", "battle-heal.wav"):
+            rate, _, block = self.samples(name)
+            self.assertLess(len(block) / float(rate), 0.5, name)
+
+    def test_the_theme_loops_without_a_click(self):
+        rate, _, block = self.samples("battle-theme.wav")
+        seconds = len(block) / float(rate)
+        self.assertGreater(seconds, 20.0)
+        self.assertLess(seconds, 40.0)
+        # The player restarts at sample zero, so the two ends are adjacent. A
+        # step there bigger than the steps inside the file is the click; both
+        # ends are taken to nothing, so there should be no step at all.
+        seam = abs(block[0] - block[-1])
+        inside = max(abs(block[index + 1] - block[index])
+                     for index in range(0, len(block) - 1, 97))
+        self.assertLessEqual(seam, inside, "the loop point clicks")
+        self.assertLess(seam, 0.01 * 32767)
+
+    def test_the_theme_leaves_room_for_the_one_shots(self):
+        # Both channels go through the same player at the same volume, so the
+        # music has to be mixed under the sounds that play over it.
+        _, _, music = self.samples("battle-theme.wav")
+        _, _, hit = self.samples("battle-hit.wav")
+        self.assertLess(max(abs(value) for value in music),
+                        max(abs(value) for value in hit))
 
 
 if __name__ == "__main__":

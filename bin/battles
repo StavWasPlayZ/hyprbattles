@@ -38,7 +38,9 @@ import time
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PLUGIN_ROOT, "lib"))
+import battle_assets                                       # noqa: E402
 import battle_rules as rules                                # noqa: E402
+import pantry                                              # noqa: E402
 
 PR_SET_PDEATHSIG = 1
 
@@ -55,8 +57,15 @@ GAMEPAD_SOCKET = os.path.join(RUNTIME_DIR, "hyprscroll2d-gamepad.sock")
 # Presence of the flag means battles are off, matching the way the bar toggle
 # and the minimap remember themselves.
 DISABLED_FLAG = os.path.join(STATE_HOME, "hyprscroll2d", "battles-disabled")
+# What has been eaten lately and has not grown back yet. See lib/pantry.py:
+# the food is a live reading of the machine, and this is the only thing that
+# stops the same 512 MiB being fed to a creature over and over.
+LEDGER_PATH = os.path.join(STATE_HOME, "hyprscroll2d", "pantry.json")
 BAR_FLAG_PATH = os.path.join(STATE_HOME, "omarchy", "toggles", "bar-off")
-ASSETS = os.path.join(PLUGIN_ROOT, "assets")
+# What ships. A user's own files live outside the checkout and win or lose
+# per name according to the assets mode; lib/battle_assets.py is the whole of
+# that decision, and `battles-ctl assets` prints what it came to.
+ASSETS = battle_assets.GENERATED
 
 # What the layout plugin posts whenever a move swaps two windows instead of
 # stepping into an empty cell, whatever asked for the move. This is the
@@ -72,6 +81,9 @@ PAD_COLLISION_EVENT = "dev.cstav.omarchy.plugin.hyprscroll2d-gamepad:collision"
 COLLISION_DEDUP = 0.5
 
 BATTLE_COOLDOWN = 6.0       # quiet period after one, so they do not stack
+# A wild window appeared: both motors flat out for a second. The gamepad
+# daemon caps what a client may ask for, so this is close to that ceiling.
+ENCOUNTER_RUMBLE_MS = 1000
 RENEW_INTERVAL = 1.5        # lease renewals, comfortably inside the pad's TTL
 CLIENT_NAME = "pokemon-battles"
 
@@ -153,9 +165,19 @@ class Sound:
     refuse a battle.
     """
 
-    def __init__(self, assets=ASSETS):
-        self.assets = assets
+    def __init__(self, assets=None, custom=None):
+        # Two directories, not one: what shipped, and whatever the user put in
+        # their config. Which of the two a given name comes from is decided
+        # per play, so `battles-ctl assets custom` takes effect on the next
+        # sound rather than on the next shell restart.
+        self.assets = ASSETS if assets is None else assets
+        self.custom = battle_assets.custom_dir() if custom is None else custom
         self.process = None
+
+    def resolve(self, name):
+        """The file this name plays from, or None if nothing is there."""
+        return battle_assets.resolve(name, generated=self.assets,
+                                     custom=self.custom)
 
     @staticmethod
     def command(path, loop):
@@ -178,8 +200,8 @@ class Sound:
 
     def play(self, name, loop=False):
         self.stop()
-        path = os.path.join(self.assets, name)
-        if not os.path.exists(path):
+        path = self.resolve(name)
+        if path is None:
             return
         argv = self.command(path, loop)
         if not argv:
@@ -200,13 +222,16 @@ class Sound:
         """Kill players left over by an earlier daemon.
 
         The shell restarts this on every reload, and a SIGKILL skips shutdown
-        entirely. Matching on our own assets directory keeps this to players
-        we started.
+        entirely. Matching on our own assets directories keeps this to players
+        we started - both of them, because the file a player was given may
+        have come from either.
         """
         try:
-            subprocess.run(["pkill", "-f", os.path.join(self.assets, "battle-")],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=2)
+            for directory in (self.assets, self.custom):
+                subprocess.run(["pkill", "-f",
+                                os.path.join(directory, "battle-")],
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=2)
         except (OSError, subprocess.SubprocessError):
             pass
 
@@ -273,6 +298,12 @@ class PadLease:
             # an error: this plugin simply has no controller to play with.
             return False
 
+    def rumble(self, strong, weak, milliseconds):
+        """Ask the gamepad daemon for a buzz. The motors live on its side of
+        the socket, and no lease is needed to ask - see its docs/PAD-API.md.
+        Silent when that plugin is not installed, like everything else here."""
+        return self.send("rumble %.2f %.2f %d" % (strong, weak, milliseconds))
+
     def grab(self, now):
         if self.send("grab " + self.name):
             self.held = True
@@ -321,12 +352,17 @@ class PadLease:
 class Daemon:
     def __init__(self):
         self.hypr = Hyprland()
+        # Bar toggles still to be reaped; see set_bar.
+        self._bar_toggles = []
         self.sound = Sound()
         # One-shots need a channel of their own: play() stops whatever that
         # channel is already playing, which is right for the music and wrong
         # for a hit that has to land over the top of it.
         self.effects = Sound()
         self.pad = PadLease()
+        # The pantry is read-only: it reads counters out of /proc and writes
+        # nothing but its own ledger. Nothing is dropped, freed or killed.
+        self.pantry = pantry.Pantry(ledger=pantry.Ledger(LEDGER_PATH))
         self.selector = selectors.DefaultSelector()
 
         self.battle = None
@@ -429,7 +465,8 @@ class Daemon:
                 return
             fight = rules.Battle(
                 rules.creature(challenger), rules.creature(defender), now,
-                direction=direction, monitor=self.monitor_name(challenger))
+                direction=direction, monitor=self.monitor_name(challenger),
+                larder=self.pantry)
         except Exception as error:
             log("battle could not start: %s" % error)
             return
@@ -441,6 +478,11 @@ class Daemon:
         # either hand is better than one tied to whichever you began with. A
         # failed grab simply means keyboard only.
         self.pad.grab(now)
+        # A second of both motors flat out, the way an encounter should land.
+        # It goes out whether or not the grab succeeded: the pad may be lent
+        # elsewhere or the battle may have been started from the keyboard, and
+        # a buzz is harmless either way.
+        self.pad.rumble(1.0, 1.0, ENCOUNTER_RUMBLE_MS)
         # The bar belongs to the desktop, and for the next minute this is not
         # the desktop. Left alone if the user already had it hidden.
         self.bar_hidden = not os.path.exists(BAR_FLAG_PATH)
@@ -478,10 +520,18 @@ class Daemon:
         # `omarchy-toggle-bar` takes the state of a flag named `bar-off`, not
         # the state of the bar: "on" sets the flag and hides the bar, "off"
         # clears it and brings the bar back.
+        #
+        # Nothing waits on it, so each call would leave a zombie behind for
+        # the life of the daemon - a poor look for the plugin that counts
+        # zombies as food. Poll the previous ones on the way past, which
+        # reaps the finished without ever blocking.
+        self._bar_toggles = [child for child in self._bar_toggles
+                             if child.poll() is None]
         try:
-            subprocess.Popen(["omarchy-toggle-bar", "off" if visible else "on"],
-                             stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
+            self._bar_toggles.append(subprocess.Popen(
+                ["omarchy-toggle-bar", "off" if visible else "on"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, start_new_session=True))
         except OSError as error:
             log("cannot toggle the bar: %s" % error)
 
@@ -529,7 +579,13 @@ class Daemon:
             self.publish()
 
     def sound_for(self, fight):
-        """Whatever the last change to the battle should sound like."""
+        """Whatever the last change to the battle should sound like.
+
+        Sounds are asked for by name and never by path: Sound is what turns a
+        name into a file, and lib/battle_assets.py is what decides whether
+        that file is the generated one or the user's own. Nothing here has to
+        know which, which is the point.
+        """
         if fight.phase == "over" and fight.result in ("win", "loss"):
             if fight.result == "win":
                 # The jingle first, on its own channel, then the fanfare takes
@@ -538,6 +594,13 @@ class Daemon:
                 self.effects.play("battle-levelup.wav")
             self.sound.play("battle-%s.wav"
                             % ("victory" if fight.result == "win" else "defeat"))
+        elif fight.effect == "level-up":
+            # Eating enough to go up a level, which is what the sting was
+            # always for. Over the music, not instead of it: the battle is
+            # still going.
+            self.effects.play("battle-levelup.wav")
+        elif fight.effect == "heal-player":
+            self.effects.play("battle-heal.wav")
         elif fight.effect.startswith("hit-"):
             self.effects.play("battle-hit.wav")
 
@@ -615,6 +678,14 @@ class Daemon:
         elif verb in ("on", "off", "toggle"):
             self.set_enabled(not self.enabled() if verb == "toggle"
                              else verb == "on")
+        elif verb == "pantry":
+            return {"pantry": [
+                {"key": shelf["key"], "name": shelf["name"],
+                 "note": shelf["note"], "unit": shelf["unit"],
+                 "portion": shelf["portion"], "available": shelf["available"],
+                 "servings": shelf["servings"]}
+                for shelf in self.pantry.stock()
+            ]}
         elif verb == "refresh":
             # Somebody flipped the flag file behind our back (the menu row
             # does exactly that, so it still works with no daemon running).

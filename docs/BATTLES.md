@@ -37,10 +37,18 @@ The Hyprscroll2D layout plugin is what makes windows collide at all, so
 without it there are simply no battles. Nothing errors; moves just swap
 windows the way they always did.
 
-**The gamepad plugin is optional.** It adds a controller to play with, and the
-narrower pad-only collision event - nothing else. Without it, battles still
-trigger from keyboard moves and are still fully playable, because the overlay
-has the keyboard regardless.
+**The gamepad plugin is optional.** It adds a controller to play with, the
+narrower pad-only collision event, and a second of both motors flat out as a
+battle opens - nothing else. Without it, battles still trigger from keyboard
+moves and are still fully playable, because the overlay has the keyboard
+regardless.
+
+The buzz is asked for over that plugin's control socket
+(`rumble 1.00 1.00 1000`, see its `docs/PAD-API.md`) rather than written to
+the device: the pad is its to drive, and it caps what a client may ask for.
+It goes out even when the lease was refused, because the controller may be
+sitting right there whichever hand started the fight, and a buzz costs
+nothing when it is not.
 
 ## The trigger path
 
@@ -160,9 +168,9 @@ controller as well when one is there.
 
 | Controller | Keyboard | What it does |
 | --- | --- | --- |
-| D-pad or left stick | Arrows, or `hjkl` | Move the cursor: up/down in `FIGHT`/`RUN`, around the 2x2 move grid |
+| D-pad or left stick | Arrows, or `hjkl` | Move the cursor: up/down in `FIGHT`/`ITEM`/`RUN` and the pantry, around the 2x2 move grid |
 | `A` | `Enter` or `Space` | Take the highlighted option, or show the next line of text |
-| `B` | `Backspace` | Out of the move list back to `FIGHT`/`RUN`, or on with the text |
+| `B` | `Backspace` | Out of the move list or the pantry, or on with the text |
 | `Start` / `Select` | `Escape` | Leave, whatever is happening |
 
 While the controller is borrowed, nothing on it reaches the desktop, so no
@@ -173,6 +181,21 @@ when the borrower is wedged - and losing it that way ends the battle.
 The two are one set of controls rather than two that could drift apart: the
 keyboard maps onto the forwarded controller events and goes through the same
 handlers.
+
+### Eating
+
+`ITEM` opens the pantry: free memory, page cache, swap, entropy, zombie
+processes and whatever is in `/tmp`, read live off the machine you are sitting
+at. Feeding heals a fraction of the creature's own maximum HP, and enough of
+it levels a creature up mid-battle.
+
+Everything about it is read-only - no memory is freed, no cache dropped, no
+process reaped - and a ledger stops you eating the same 512 MiB twice. The
+whole of it, including why that is honest rather than a cheat, is in
+[`FOOD.md`](FOOD.md).
+
+Eating costs the turn, which is what stops it being strictly better than
+fighting.
 
 ### Running away
 
@@ -250,11 +273,13 @@ never depends on anything being up.
 
 ## Sound
 
-`bin/make-battle-audio` generates the hit and the two fanfares with nothing but
-the standard library's `wave` module, out of the voices a 1980s sound chip had:
-a pulse channel with a switchable duty cycle for the melody, a triangle for the
-bass, white noise for the drums. They are committed, so a fresh checkout has
-audio without running anything.
+`bin/make-battle-audio` generates **all seven sounds**, the looping theme
+included, with nothing but the standard library's `wave` module, out of the
+voices a 1980s sound chip had: two pulse channels with switchable duty cycles
+for the melody and the harmony, a triangle for the bass and the kick, white
+noise for the rest of the drums. They are committed, so a fresh clone fights
+with sound without running anything - and with nothing in it that anybody else
+wrote.
 
 There are two channels. The music channel plays the theme for the length of the
 battle and is taken over by the fanfare when it ends; one-shots get a channel
@@ -262,26 +287,102 @@ of their own, so a hit lands over the music instead of cutting it off.
 
 | File | When it plays |
 | --- | --- |
-| `assets/battle-theme.wav` | Looping, for the length of the battle |
-| `assets/battle-select.wav` | Every menu press that did something |
-| `assets/battle-hit.wav` | Every time a creature is struck |
-| `assets/battle-victory.wav` | The challenger won |
-| `assets/battle-defeat.wav` | The challenger lost |
+| `battle-theme.wav` | Looping, for the length of the battle |
+| `battle-select.wav` | Every menu press that did something |
+| `battle-hit.wav` | Every time a creature is struck |
+| `battle-heal.wav` | A creature is fed |
+| `battle-levelup.wav` | A creature grows a level, and on a win |
+| `battle-victory.wav` | The challenger won |
+| `battle-defeat.wav` | The challenger lost |
 
-The daemon plays whatever sits at those paths and knows nothing else about
-them, so swapping one out is a supported thing to do, and a missing file simply
-means that sound does not play - everything else still works.
+The daemon asks for those **names** and never for a path; a missing file simply
+means that sound does not play, and everything else still works.
 
-The looping theme is **not** in this repository. What you put there, and
-whether you have the right to, is your business; keep the `.gitignore` entry
-that stops it being committed, and do the same for anything else you drop in.
+### The theme
 
-There is no PP and there is no healing, so there is nothing for a
-"PP restore" or "HP restore" sound to play on. Moves have power and accuracy
-but unlimited uses, and no creature ever gains HP back during a fight. Adding
-either would mean adding the mechanic first - an item menu beside `FIGHT` and
-`RUN`, and longer battles to go with it - which is a bigger change than a
-sound file.
+Eighteen bars in A minor at 152 beats to the minute, mono, 22 kHz, about
+twenty-eight and a half seconds. Two bars of intro flourish - a hammered A/G#
+trill, a run up the triad, a crash - then an eight-bar A section of sixteenths
+over `i - VI - VII`, then an eight-bar B section that climbs to A6 and walks a
+scale back down. Underneath, a triangle bass on eighths, chord stabs on the
+offbeats in the second pulse voice, and a kick/snare/hat pattern with a fill
+into the top of the loop.
+
+The last bar is the dominant and the intro opens over the tonic, so the end of
+the file is a cadence into its own beginning: the loop point is a bar line
+rather than a fade, and both ends are taken to silence so the seam cannot
+click. The theme is normalised several dB below the one-shots, because both
+channels go through the same player at the same volume and a hit has to land
+over it.
+
+The era, the instruments, the tempo and the mood are imitated on purpose. The
+tune is not: every note of it was written for this repository, and a test
+pins the loop, the levels and the lengths down so a bad regeneration cannot
+ship silence.
+
+### Your own files instead
+
+Any of the seven can be replaced without touching the repository. Drop a file
+of the same name into
+
+```
+~/.config/omarchy/pokemon-battles/assets/
+```
+
+(`$XDG_CONFIG_HOME` is respected). That directory is deliberately **outside the
+checkout**: a clone stays clean and `git status` stays quiet however much music
+ends up in it, whatever its licence says.
+
+Which of the two directories wins is a mode:
+
+| Mode | What plays |
+| --- | --- |
+| `auto` | Your file when there is one, the generated one when there is not. Decided **per file**, so replacing only the theme leaves the other six alone. The default. |
+| `generated` | Only what ships, even with your files sitting right there. The A/B position: it needs nothing moved. |
+| `custom` | Only your files. A name you have not supplied is silent, which is what makes this a real test of your own set rather than a second `auto`. |
+
+```bash
+bin/battles-ctl assets                  # the mode, and what every sound
+                                        # is actually resolving to
+bin/battles-ctl assets generated        # A/B against what ships
+bin/battles-ctl assets auto             # back to the default
+POKEMON_BATTLES_ASSETS=custom bin/battles-ctl assets   # one run only
+```
+
+The mode is a file, `~/.local/state/hyprscroll2d/battles-assets`, the same
+shape as the on/off flag beside it, so it reads and writes with the shell down.
+`POKEMON_BATTLES_ASSETS` overrides it for one process. The daemon resolves on
+every `play()`, so a change lands on the next sound rather than on the next
+restart.
+
+The listing is the point of the command. "My file is not playing" has three
+ordinary causes - the mode is `generated`, the name is not one the daemon ever
+asks for, or the file is not where it needs to be - and all three are visible
+in the same three columns:
+
+```
+mode       auto
+generated  .../plugins/dev.cstav.omarchy.plugin.pokemon-battles/assets
+custom     /home/you/.config/omarchy/pokemon-battles/assets
+
+battle-theme.wav    custom     /home/you/.config/omarchy/.../battle-theme.wav
+battle-select.wav   generated  .../assets/battle-select.wav
+...
+```
+
+`bin/import-battle-theme <file>` decodes anything `ffmpeg` can read into that
+directory, for a theme that arrives as an MP3 - the players only understand
+PCM. The whole of the resolution order is
+[`lib/battle_assets.py`](../lib/battle_assets.py), and nothing else in the
+plugin knows about it.
+
+What you put there, and whether you have the right to, is between you and
+whoever wrote it; nothing under that directory can reach the repository.
+
+Healing has a sound because it has a mechanic: `battle-heal.wav` plays when a
+creature is fed from the pantry, and `battle-levelup.wav` when a meal takes it
+up a level. There is still no PP - moves have power and accuracy but unlimited
+uses - so nothing would ever play a "PP restore", and there is no such file.
 
 The player is the first of `mpv`, `pw-play`, `paplay` and `aplay` that is
 installed. With none of them, battles are silent rather than refused.
@@ -335,6 +436,7 @@ bin/battles-ctl stop       # tear it down now, without the closing line
 bin/battles-ctl debug      # force one
 bin/battles-ctl on|off|toggle
 bin/battles-ctl enabled    # true / false
+bin/battles-ctl assets [auto|generated|custom]
 bin/battles-ctl pick [n]   # play move n
 bin/battles-ctl advance    # step the text on
 ```
@@ -363,7 +465,16 @@ Trigger       that the odds really are one in four, over 20000 rolls
 TurnLoop      the menus, the phases, the timeouts, the snapshot's shape
 Running       free before the first blow, a gamble after it, hatches unaffected
 BattleWiring  that a result can still only ever ask for a move
+Readings      the /proc parsers, against fixtures and against this machine
+TheLedger     regeneration, persistence, and a corrupt file
+ThePantry     live readings minus the ledger, and that the machine never moves
+Eating        the ITEM menu, healing, levelling, and the turn it costs
 CollisionGate the switch, the cooldown, the roll, and nonsense payloads
 BattleInput   forwarded controller events, including losing the pad mid-fight
-Music         the player, missing files, and that every asset named exists
+Music           the player, missing files, and that the three name lists agree
+Assets          the resolution order in all three modes, per-file fallback,
+                the environment override, and that the daemon has no copy of it
+GeneratedAudio  that what ships is a playable WAV, is neither silent nor
+                clipped, is short enough for a one-shot, and loops without a
+                click at the seam
 ```

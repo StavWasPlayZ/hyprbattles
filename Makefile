@@ -5,7 +5,8 @@ test:
 
 check: test
 	python3 -m py_compile bin/battles bin/battles-ctl bin/make-battle-audio
-	python3 -m py_compile lib/battle_rules.py
+	python3 -m py_compile bin/import-battle-theme
+	python3 -m py_compile lib/battle_rules.py lib/battle_assets.py
 	python3 -m json.tool manifest.json >/dev/null
 	test -f Service.qml
 	test -f Battle.qml
@@ -13,14 +14,16 @@ check: test
 	test -f BattleFighter.qml
 	test -f BattleStatusBox.qml
 	test -f BattleTypeChip.qml
+	test -f assets/battle-theme.wav
 	test -f assets/battle-select.wav
 	test -f assets/battle-hit.wav
 	test -f assets/battle-levelup.wav
+	test -f assets/battle-heal.wav
 	test -f assets/battle-victory.wav
 	test -f assets/battle-defeat.wav
 	@if command -v omarchy >/dev/null 2>&1; then omarchy plugin validate .; fi
 
-# Regenerate the committed chiptune. The looping theme is supplied locally and
-# is not touched by this.
+# Regenerate the committed chiptune, the looping theme included. It does not
+# touch anything in ~/.config/omarchy/pokemon-battles/assets/.
 audio:
 	python3 bin/make-battle-audio
