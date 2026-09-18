@@ -565,6 +565,59 @@ class BattleWiring(unittest.TestCase):
             self.assertNotIn(forbidden, body, forbidden)
         self.assertIn('hl.dsp.layout("move %s")', body)
 
+    def ending(self, result, direction="left"):
+        """A bare daemon, ended on one result. Nothing here has a compositor,
+        a pad, a speaker or a screen."""
+        daemon = bd.Daemon.__new__(bd.Daemon)
+        daemon.battle = type("Fight", (), {
+            "result": result, "direction": direction,
+            "player": {"name": "FOOT"},
+        })()
+        daemon.quiet_until = 0.0
+        daemon.pad = FakePad()
+        daemon.sound = FakeSound()
+        daemon.effects = FakeSound()
+        daemon.bar_hidden = False
+        daemon.publish = lambda: None
+        daemon.dispatched = []
+        daemon.hypr = type("Hypr", (), {
+            "dispatch": lambda _self, command: daemon.dispatched.append(command),
+        })()
+        daemon.notices = []
+        daemon.notify = lambda summary, body: daemon.notices.append((summary, body))
+        daemon.end(100.0)
+        return daemon
+
+    def test_a_loss_says_so_on_the_desktop(self):
+        # The overlay is gone by the time the window moves back, so without
+        # this the only sign of a lost battle is a window somewhere the
+        # person did not put it.
+        daemon = self.ending("loss")
+        self.assertEqual(len(daemon.notices), 1)
+        summary, body = daemon.notices[0]
+        self.assertIn("FOOT", summary)
+        self.assertIn("original position", body)
+
+    def test_nothing_is_said_when_nothing_moved(self):
+        # A win, a draw and a flee all leave the swap standing, and a forced
+        # battle has no direction to put anything back along. None of them
+        # has anything to apologise for.
+        for result, direction in (("win", "left"), ("draw", "left"),
+                                  ("", "left"), ("loss", "")):
+            daemon = self.ending(result, direction)
+            self.assertEqual(daemon.notices, [], (result, direction))
+            self.assertEqual(daemon.dispatched, [], (result, direction))
+
+    def test_the_notifier_is_reaped_like_the_bar_toggles(self):
+        # Nothing waits on it, so an unreaped one is a zombie for the life of
+        # the daemon - in the plugin that serves zombies as food.
+        with open(os.path.join(ROOT, "bin", "battles")) as handle:
+            source = handle.read()
+        start = source.index("    def notify(self, summary, body):")
+        body = source[start:source.index("    # ---", start)]
+        self.assertIn("child.poll() is None", body)
+        self.assertIn("start_new_session=True", body)
+
     def test_everything_it_dispatches_is_a_lua_expression(self):
         # This Hyprland evaluates `hl.dispatch(<what we sent>)` as Lua, so a
         # classic dispatcher string is a syntax error that fails silently.

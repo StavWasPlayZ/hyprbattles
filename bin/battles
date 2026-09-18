@@ -352,8 +352,9 @@ class PadLease:
 class Daemon:
     def __init__(self):
         self.hypr = Hyprland()
-        # Bar toggles still to be reaped; see set_bar.
+        # Bar toggles and notifiers still to be reaped; see set_bar.
         self._bar_toggles = []
+        self._notifiers = []
         self.sound = Sound()
         # One-shots need a channel of their own: play() stops whatever that
         # channel is already playing, which is right for the music and wrong
@@ -515,6 +516,12 @@ class Daemon:
                         "up": "down", "down": "up"}.get(fight.direction)
             if opposite:
                 self.hypr.dispatch('hl.dsp.layout("move %s")' % opposite)
+                # The one result that puts a window somewhere the person did
+                # not ask for it to be. The overlay is gone by now, so the
+                # notification is the only thing left to say why.
+                self.notify(
+                    "%s was beaten" % fight.player.get("name", "Your window"),
+                    "Your program had retreated to its original position...")
 
     def set_bar(self, visible):
         # `omarchy-toggle-bar` takes the state of a flag named `bar-off`, not
@@ -534,6 +541,27 @@ class Daemon:
                 stderr=subprocess.DEVNULL, start_new_session=True))
         except OSError as error:
             log("cannot toggle the bar: %s" % error)
+
+    def notify(self, summary, body):
+        """Say something on the desktop, for the one outcome that needs it.
+
+        Reaped the way the bar toggles are: nothing waits on a notifier, so
+        each one would otherwise leave a zombie behind for the life of the
+        daemon - poor form in the plugin that counts zombies as food.
+
+        A missing `notify-send` is not an error. The battle is over and the
+        windows are where they belong either way; this is commentary.
+        """
+        self._notifiers = [child for child in self._notifiers
+                           if child.poll() is None]
+        try:
+            self._notifiers.append(subprocess.Popen(
+                ["notify-send", "-a", "Window Battles",
+                 "-i", "input-gaming", summary, body],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, start_new_session=True))
+        except OSError as error:
+            log("cannot send a notification: %s" % error)
 
     # -------------------------------------------------------------- input
 
