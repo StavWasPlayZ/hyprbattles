@@ -4,10 +4,16 @@ Throw a window at another window - with a controller or with the keyboard -
 and, one time in four, the two of them settle it in a turn-based fight instead
 of just swapping places.
 
-Types, HP bars, a move menu, a `FIGHT`/`RUN` choice, chiptune - and the
+Types, HP bars, a move menu, a `FIGHT`/`ITEM`/`RUN` choice, chiptune - and the
 fighters are the windows themselves, still running, captured onto a battle
 screen over your own wallpaper. The winner keeps the cell they were arguing
 about.
+
+Creatures eat, too, and the food is your actual machine: free memory, page
+cache, swap, entropy, zombie processes. All of it read-only, none of it
+consumed, and a ledger so you cannot feed the same 512 MiB to a creature
+twice. See [`docs/FOOD.md`](docs/FOOD.md) - open a browser and your creatures
+go hungry.
 
 It is a joke that plays straight. The type chart is real, the damage formula
 is real, the loser genuinely gets moved. What it cannot do is cost you
@@ -22,11 +28,13 @@ where you wanted it, which is also the worst outcome of not having a battle.
 | [`bin/battles`](bin/battles) | The daemon: watches for a pad-driven collision, rolls the odds, borrows the controller, runs the fight. |
 | [`bin/battles-ctl`](bin/battles-ctl) | Read the state, switch battles on or off, or force one, from anywhere. |
 | [`lib/battle_rules.py`](lib/battle_rules.py) | The rules: creatures, types, damage, the turn loop. No I/O in it at all. |
+| [`lib/pantry.py`](lib/pantry.py) | The food: read-only readings of free memory, cache, swap, entropy and zombies, and the ledger that keeps them honest. |
 | [`Battle.qml`](Battle.qml) | The battle screen. Draws the snapshot the daemon publishes, and nothing else. |
 | [`PixelText.qml`](PixelText.qml) | An original 5x7 pixel font, drawn square by square onto a Canvas. |
 
 Full rules, the trigger path, the escape hatches and how to force one:
-[`docs/BATTLES.md`](docs/BATTLES.md).
+[`docs/BATTLES.md`](docs/BATTLES.md). The pantry and its ledger:
+[`docs/FOOD.md`](docs/FOOD.md).
 
 ## What it needs
 

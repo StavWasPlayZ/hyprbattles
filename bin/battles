@@ -39,6 +39,7 @@ import time
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PLUGIN_ROOT, "lib"))
 import battle_rules as rules                                # noqa: E402
+import pantry                                              # noqa: E402
 
 PR_SET_PDEATHSIG = 1
 
@@ -55,6 +56,10 @@ GAMEPAD_SOCKET = os.path.join(RUNTIME_DIR, "hyprscroll2d-gamepad.sock")
 # Presence of the flag means battles are off, matching the way the bar toggle
 # and the minimap remember themselves.
 DISABLED_FLAG = os.path.join(STATE_HOME, "hyprscroll2d", "battles-disabled")
+# What has been eaten lately and has not grown back yet. See lib/pantry.py:
+# the food is a live reading of the machine, and this is the only thing that
+# stops the same 512 MiB being fed to a creature over and over.
+LEDGER_PATH = os.path.join(STATE_HOME, "hyprscroll2d", "pantry.json")
 BAR_FLAG_PATH = os.path.join(STATE_HOME, "omarchy", "toggles", "bar-off")
 ASSETS = os.path.join(PLUGIN_ROOT, "assets")
 
@@ -327,6 +332,9 @@ class Daemon:
         # for a hit that has to land over the top of it.
         self.effects = Sound()
         self.pad = PadLease()
+        # The pantry is read-only: it reads counters out of /proc and writes
+        # nothing but its own ledger. Nothing is dropped, freed or killed.
+        self.pantry = pantry.Pantry(ledger=pantry.Ledger(LEDGER_PATH))
         self.selector = selectors.DefaultSelector()
 
         self.battle = None
@@ -429,7 +437,8 @@ class Daemon:
                 return
             fight = rules.Battle(
                 rules.creature(challenger), rules.creature(defender), now,
-                direction=direction, monitor=self.monitor_name(challenger))
+                direction=direction, monitor=self.monitor_name(challenger),
+                larder=self.pantry)
         except Exception as error:
             log("battle could not start: %s" % error)
             return
@@ -529,7 +538,12 @@ class Daemon:
             self.publish()
 
     def sound_for(self, fight):
-        """Whatever the last change to the battle should sound like."""
+        """Whatever the last change to the battle should sound like.
+
+        Assets are played through Sound by name. If an asset-resolution helper
+        lands (generated versus custom), these calls should go through it
+        rather than naming files here.
+        """
         if fight.phase == "over" and fight.result in ("win", "loss"):
             if fight.result == "win":
                 # The jingle first, on its own channel, then the fanfare takes
@@ -538,6 +552,13 @@ class Daemon:
                 self.effects.play("battle-levelup.wav")
             self.sound.play("battle-%s.wav"
                             % ("victory" if fight.result == "win" else "defeat"))
+        elif fight.effect == "level-up":
+            # Eating enough to go up a level, which is what the sting was
+            # always for. Over the music, not instead of it: the battle is
+            # still going.
+            self.effects.play("battle-levelup.wav")
+        elif fight.effect == "heal-player":
+            self.effects.play("battle-heal.wav")
         elif fight.effect.startswith("hit-"):
             self.effects.play("battle-hit.wav")
 
@@ -615,6 +636,14 @@ class Daemon:
         elif verb in ("on", "off", "toggle"):
             self.set_enabled(not self.enabled() if verb == "toggle"
                              else verb == "on")
+        elif verb == "pantry":
+            return {"pantry": [
+                {"key": shelf["key"], "name": shelf["name"],
+                 "note": shelf["note"], "unit": shelf["unit"],
+                 "portion": shelf["portion"], "available": shelf["available"],
+                 "servings": shelf["servings"]}
+                for shelf in self.pantry.stock()
+            ]}
         elif verb == "refresh":
             # Somebody flipped the flag file behind our back (the menu row
             # does exactly that, so it still works with no daemon running).

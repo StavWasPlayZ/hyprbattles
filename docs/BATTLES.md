@@ -160,9 +160,9 @@ controller as well when one is there.
 
 | Controller | Keyboard | What it does |
 | --- | --- | --- |
-| D-pad or left stick | Arrows, or `hjkl` | Move the cursor: up/down in `FIGHT`/`RUN`, around the 2x2 move grid |
+| D-pad or left stick | Arrows, or `hjkl` | Move the cursor: up/down in `FIGHT`/`ITEM`/`RUN` and the pantry, around the 2x2 move grid |
 | `A` | `Enter` or `Space` | Take the highlighted option, or show the next line of text |
-| `B` | `Backspace` | Out of the move list back to `FIGHT`/`RUN`, or on with the text |
+| `B` | `Backspace` | Out of the move list or the pantry, or on with the text |
 | `Start` / `Select` | `Escape` | Leave, whatever is happening |
 
 While the controller is borrowed, nothing on it reaches the desktop, so no
@@ -173,6 +173,21 @@ when the borrower is wedged - and losing it that way ends the battle.
 The two are one set of controls rather than two that could drift apart: the
 keyboard maps onto the forwarded controller events and goes through the same
 handlers.
+
+### Eating
+
+`ITEM` opens the pantry: free memory, page cache, swap, entropy, zombie
+processes and whatever is in `/tmp`, read live off the machine you are sitting
+at. Feeding heals a fraction of the creature's own maximum HP, and enough of
+it levels a creature up mid-battle.
+
+Everything about it is read-only - no memory is freed, no cache dropped, no
+process reaped - and a ledger stops you eating the same 512 MiB twice. The
+whole of it, including why that is honest rather than a cheat, is in
+[`FOOD.md`](FOOD.md).
+
+Eating costs the turn, which is what stops it being strictly better than
+fighting.
 
 ### Running away
 
@@ -265,6 +280,8 @@ of their own, so a hit lands over the music instead of cutting it off.
 | `assets/battle-theme.wav` | Looping, for the length of the battle |
 | `assets/battle-select.wav` | Every menu press that did something |
 | `assets/battle-hit.wav` | Every time a creature is struck |
+| `assets/battle-heal.wav` | A creature is fed |
+| `assets/battle-levelup.wav` | A creature grows a level, and on a win |
 | `assets/battle-victory.wav` | The challenger won |
 | `assets/battle-defeat.wav` | The challenger lost |
 
@@ -363,6 +380,10 @@ Trigger       that the odds really are one in four, over 20000 rolls
 TurnLoop      the menus, the phases, the timeouts, the snapshot's shape
 Running       free before the first blow, a gamble after it, hatches unaffected
 BattleWiring  that a result can still only ever ask for a move
+Readings      the /proc parsers, against fixtures and against this machine
+TheLedger     regeneration, persistence, and a corrupt file
+ThePantry     live readings minus the ledger, and that the machine never moves
+Eating        the ITEM menu, healing, levelling, and the turn it costs
 CollisionGate the switch, the cooldown, the roll, and nonsense payloads
 BattleInput   forwarded controller events, including losing the pad mid-fight
 Music         the player, missing files, and that every asset named exists

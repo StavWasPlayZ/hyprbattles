@@ -11,6 +11,9 @@
     battles-ctl debug           # force one between the focused window and its
                                 # neighbour, for working on the overlay
 
+    battles-ctl pantry          # what is on the shelves right now: a live,
+                                # read-only reading of the machine
+
     battles-ctl key <name>      # left|right|up|down|confirm|back|leave, the
                                 # overlay's keyboard mapped onto the controls
 
@@ -37,9 +40,21 @@ STATE_HOME = (os.environ.get("XDG_STATE_HOME")
 DISABLED_FLAG = os.path.join(STATE_HOME, "hyprscroll2d", "battles-disabled")
 
 COMMANDS = ("status", "enabled", "on", "off", "toggle", "cancel", "stop",
-            "debug", "pick", "advance", "key")
+            "debug", "pantry", "pick", "advance", "key")
 # These work without a daemon; the rest need one.
 OFFLINE = ("enabled", "on", "off", "toggle")
+
+
+def describe(amount, unit):
+    """A reading as something short enough for a column. Kept in step with
+    pantry.describe(); this script deliberately imports nothing."""
+    if unit == "MiB":
+        if amount >= 1024:
+            return "%.1f GiB" % (amount / 1024.0)
+        return "%d MiB" % int(amount)
+    if unit:
+        return "%d %s" % (int(amount), unit)
+    return "%d" % int(amount)
 
 
 def enabled():
@@ -108,6 +123,18 @@ def main(argv):
     except (OSError, ValueError):
         print("window battles daemon is not running", file=sys.stderr)
         return 1
+
+    if argument == "pantry":
+        shelves = state.get("pantry") or []
+        if not shelves:
+            print("the pantry is empty")
+            return 0
+        for shelf in shelves:
+            print("%-12s %-11s %3d servings   %s" % (
+                shelf["name"],
+                describe(shelf["available"], shelf["unit"]),
+                shelf["servings"], shelf["note"]))
+        return 0
 
     print(json.dumps(state))
     return 0

@@ -16,6 +16,7 @@ check: test
 	test -f assets/battle-select.wav
 	test -f assets/battle-hit.wav
 	test -f assets/battle-levelup.wav
+	test -f assets/battle-heal.wav
 	test -f assets/battle-victory.wav
 	test -f assets/battle-defeat.wav
 	@if command -v omarchy >/dev/null 2>&1; then omarchy plugin validate .; fi

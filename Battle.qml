@@ -46,8 +46,10 @@ Item {
     readonly property string message: String(state.message || "")
     readonly property bool menuOpen: state.menu === true
     readonly property bool actionOpen: state.action === true
-    // Either menu is up, so the battle is waiting on you.
-    readonly property bool choosing: menuOpen || actionOpen
+    readonly property bool itemOpen: state.item === true
+    // A menu is up, so the battle is waiting on you.
+    readonly property bool choosing: menuOpen || actionOpen || itemOpen
+    readonly property var shelves: state.shelves || []
     readonly property int cursor: Number(state.cursor || 0)
     readonly property var moves: state.moves || []
     readonly property var actions: state.actions || []
@@ -64,6 +66,21 @@ Item {
         "CHAT": "#d8a04a", "MEDIA": "#d86e9a", "PIXEL": "#dc6a6a",
         "GLASS": "#6fb8bb"
     })
+
+    // What the text box says while the pantry is open: the highlighted
+    // shelf's own description and how much of it the machine has spare.
+    readonly property string shelfNote: {
+        var shelf = shelves[cursor]
+        if (!shelf) return message
+        var amount = shelf.unit === "MiB"
+            ? (shelf.available >= 1024
+               ? (shelf.available / 1024).toFixed(1) + " GIB"
+               : Math.floor(shelf.available) + " MIB")
+            : Math.floor(shelf.available) + (shelf.unit ? " " + shelf.unit : "")
+        // One newline, not two: a long note plus a blank line plus the
+        // reading is five lines, and five lines do not fit the box.
+        return String(shelf.note || "") + "\n" + amount + " SPARE"
+    }
 
     function typeColor(name) {
         var value = typeColors[String(name || "")]
@@ -397,17 +414,22 @@ Item {
                         // Centred in the box rather than pinned to the top, so
                         // a one-line message does not sit in a void.
                         y: (textBox.height - implicitHeight) / 2
-                        width: root.choosing ? textBox.width * 0.50 - panel.unit * 14
-                                             : textBox.width - panel.unit * 20
+                        width: root.itemOpen ? textBox.width * 0.42 - panel.unit * 14
+                             : root.choosing ? textBox.width * 0.50 - panel.unit * 14
+                             : textBox.width - panel.unit * 20
                         // The narration is the thing you are reading, so it
                         // gets a size of its own rather than the base unit.
                         pixel: root.choosing ? panel.unit : panel.unit + 1
-                        lineGap: 4
+                        // The pantry note runs to three lines plus its
+                        // reading; a tighter leading is what keeps that
+                        // inside the box.
+                        lineGap: root.itemOpen ? 2 : 4
                         color: Color.foreground
                         columns: Math.max(8, Math.floor(width / (6 * panel.unit)))
                         // Typewriter: the line arrives a letter at a time, the
                         // way it does on the machines this is imitating.
-                        text: root.message.substring(0, typed)
+                        text: root.itemOpen ? root.shelfNote
+                                            : root.message.substring(0, typed)
 
                         property int typed: 0
                     }
@@ -465,9 +487,14 @@ Item {
                             border.color: Util.alpha(Color.foreground, 0.32)
                         }
 
-                        Column {
-                            anchors.centerIn: parent
-                            spacing: panel.unit * 6
+                        // A 2x2 grid, the same shape as the move list, so the
+                        // same hand movement means the same thing in both.
+                        // Three options leave a hole; the cursor refuses it.
+                        Grid {
+                            anchors.fill: parent
+                            anchors.margins: panel.unit * 4
+                            columns: 2
+                            spacing: panel.unit * 3
 
                             Repeater {
                                 model: root.actions
@@ -479,8 +506,8 @@ Item {
                                     required property int index
                                     readonly property bool picked: index === root.cursor
 
-                                    width: actionMenu.width - panel.unit * 12
-                                    height: label.implicitHeight + panel.unit * 5
+                                    width: (actionMenu.width - panel.unit * 11) / 2
+                                    height: (actionMenu.height - panel.unit * 11) / 2
 
                                     Rectangle {
                                         anchors.fill: parent
@@ -495,6 +522,7 @@ Item {
                                         height: panel.unit * 5
                                         x: panel.unit * 2
                                         anchors.verticalCenter: parent.verticalCenter
+                                        onVisibleChanged: requestPaint()
                                         onPaint: {
                                             var context = getContext("2d")
                                             context.reset()
@@ -510,11 +538,116 @@ Item {
 
                                     PixelText {
                                         id: label
-                                        x: panel.unit * 8
+                                        x: panel.unit * 7
                                         anchors.verticalCenter: parent.verticalCenter
                                         text: String(choice.modelData)
-                                        pixel: panel.unit + 1
+                                        pixel: panel.unit
                                         color: choice.picked ? Color.accent : Color.foreground
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // The pantry. One column rather than a grid: every row
+                    // carries a reading and a note, and those do not fit
+                    // side by side.
+                    Item {
+                        id: pantry
+
+                        visible: root.itemOpen
+                        x: textBox.width * 0.42
+                        y: panel.frame * 3 + panel.unit * 2
+                        width: textBox.width * 0.58 - panel.frame * 3 - panel.unit * 2
+                        height: textBox.height - panel.frame * 6 - panel.unit * 4
+
+                        Rectangle {
+                            anchors.fill: parent
+                            color: Util.alpha(Color.foreground, 0.05)
+                            border.width: Math.max(1, Math.round(panel.frame / 2))
+                            border.color: Util.alpha(Color.foreground, 0.32)
+                        }
+
+                        Grid {
+                            id: shelfList
+
+                            anchors.fill: parent
+                            anchors.margins: panel.unit * 3
+                            columns: 2
+                            spacing: panel.unit
+
+                            readonly property int rows: Math.max(1,
+                                Math.ceil(root.shelves.length / columns))
+                            // The spacing between rows has to come out of the
+                            // rows, or the last shelf falls off the bottom.
+                            readonly property int rowHeight: Math.floor(
+                                (height - spacing * (rows - 1)) / rows)
+                            readonly property int columnWidth: Math.floor(
+                                (width - spacing) / columns)
+
+                            Repeater {
+                                model: root.shelves
+
+                                Item {
+                                    id: shelf
+
+                                    required property var modelData
+                                    required property int index
+                                    readonly property bool picked: index === root.cursor
+                                    // An empty shelf is still listed - that is
+                                    // half the joke - but it reads as empty.
+                                    readonly property bool bare: Number(modelData.servings || 0) <= 0
+
+                                    width: shelfList.columnWidth
+                                    height: shelfList.rowHeight
+
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        color: shelf.picked ? Util.alpha(Color.accent, 0.16) : "transparent"
+                                        border.width: shelf.picked ? Math.max(1, Math.round(panel.frame / 2)) : 0
+                                        border.color: Color.accent
+                                    }
+
+                                    Canvas {
+                                        visible: shelf.picked
+                                        width: panel.unit * 3
+                                        height: panel.unit * 4
+                                        x: panel.unit
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        onPaint: {
+                                            var context = getContext("2d")
+                                            context.reset()
+                                            context.fillStyle = Color.accent
+                                            context.beginPath()
+                                            context.moveTo(0, 0)
+                                            context.lineTo(width, height / 2)
+                                            context.lineTo(0, height)
+                                            context.closePath()
+                                            context.fill()
+                                        }
+                                    }
+
+                                    PixelText {
+                                        id: shelfName
+                                        x: panel.unit * 6
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: String(shelf.modelData.name || "")
+                                        pixel: Math.max(2, panel.unit - 1)
+                                        color: shelf.bare
+                                            ? Util.alpha(Color.foreground, 0.38)
+                                            : (shelf.picked ? Color.accent : Color.foreground)
+                                    }
+
+                                    PixelText {
+                                        anchors.right: parent.right
+                                        anchors.rightMargin: panel.unit * 2
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: shelf.bare ? "NONE"
+                                                         : "x" + String(shelf.modelData.servings)
+                                        pixel: Math.max(2, panel.unit - 1)
+                                        color: shelf.bare
+                                            ? Util.alpha(Color.foreground, 0.38)
+                                            : Util.alpha(Color.foreground, 0.72)
                                     }
                                 }
                             }
