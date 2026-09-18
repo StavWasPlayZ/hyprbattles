@@ -1,34 +1,36 @@
 #!/usr/bin/env python3
-"""Synthesise the battle's win and loss fanfares into assets/.
+"""Synthesise the whole battle soundtrack into assets/.
 
 Everything here is written from scratch with the standard library's `wave`
 module: no sample packs, no downloads, nothing lifted from a commercial game
-or from a cover of one. The voices are the ones a 1980s sound chip had - a
-pulse channel with a switchable duty cycle for the melody and harmony, and a
-triangle for the bass - because that, rather than any particular tune, is what
-makes a soundtrack sound 8-bit.
+or from a cover of one. The voices are the ones a 1980s sound chip had - two
+pulse channels with switchable duty cycles for the melody and the harmony, a
+triangle for the bass and the kick, and white noise for the rest of the drums
+- because that, rather than any particular tune, is what makes a soundtrack
+sound 8-bit.
 
-The theme that loops for the length of a battle is not generated: it is an
-audio file imported by bin/import-battle-theme, and this script leaves
-assets/battle-theme.wav alone.
+The era, the instruments, the tempo and the mood are imitated on purpose. The
+tunes are not: every note in this file was written for it. A cover is still
+somebody else's composition, which is the whole reason this generator exists.
 
-Run it after changing a pattern; the resulting WAVs are committed so a fresh
-checkout has audio without running anything:
+Run it after changing a pattern; the resulting WAVs are committed, so a fresh
+clone fights with sound and with nothing in it that anybody else wrote:
 
     bin/make-battle-audio
 
-Five files come out:
+Seven files come out:
 
+    assets/battle-theme.wav     the loop that plays for the length of a fight
     assets/battle-hit.wav       the one-shot for a creature being struck
     assets/battle-select.wav    the blip under every menu press
     assets/battle-levelup.wav   the rising sting when the challenger wins
+    assets/battle-heal.wav      eating something out of the larder
     assets/battle-victory.wav   a short fanfare for a win
-    assets/battle-defeat.wav    the same length, and considerably sadder
+    assets/battle-defeat.wav    the same shape, and considerably sadder
 
-The daemon plays whatever sits at those paths and cares about nothing else
-about them, so swapping a file out is a supported thing to do. What you are
-allowed to put there is between you and whoever wrote it; this repository
-ships only music it generated itself.
+Any of the six can be replaced without touching the repository by dropping a
+file of the same name into $XDG_CONFIG_HOME/omarchy/pokemon-battles/assets/;
+see lib/battle_assets.py and `bin/battles-ctl assets`.
 """
 
 import array
@@ -48,12 +50,12 @@ NOTES = {"C": -9, "C#": -8, "D": -7, "D#": -6, "E": -5, "F": -4, "F#": -3,
          "G": -2, "G#": -1, "A": 0, "A#": 1, "B": 2}
 
 
-def frequency(name):
+def frequency(name, semitones=0):
     """"A4" -> 440.0. A rest is written as "-" and has no frequency."""
     if name == "-":
         return 0.0
     pitch, octave = name[:-1], int(name[-1])
-    return 440.0 * (2.0 ** (NOTES[pitch] / 12.0 + (octave - 4)))
+    return 440.0 * (2.0 ** ((NOTES[pitch] + semitones) / 12.0 + (octave - 4)))
 
 
 def envelope(index, total, attack, release):
@@ -68,7 +70,7 @@ def envelope(index, total, attack, release):
 
 def pulse(buffer, start, samples, hertz, level, duty=0.5, decay=0.0):
     """A square wave with a duty cycle: the chip's melody and harmony voice."""
-    if hertz <= 0:
+    if hertz <= 0 or samples <= 0:
         return
     period = RATE / hertz
     attack = min(int(RATE * 0.004), samples // 4)
@@ -86,7 +88,7 @@ def pulse(buffer, start, samples, hertz, level, duty=0.5, decay=0.0):
 
 def triangle(buffer, start, samples, hertz, level):
     """The bass voice. A triangle is softer than a square and sits under it."""
-    if hertz <= 0:
+    if hertz <= 0 or samples <= 0:
         return
     period = RATE / hertz
     attack = min(int(RATE * 0.004), samples // 4)
@@ -109,10 +111,57 @@ def noise(buffer, start, samples, level, decay=18.0, rng=None):
             buffer[offset] += rng.uniform(-1.0, 1.0) * gain
 
 
-def write(path, buffer):
-    """Normalise to just under full scale and write 16-bit mono."""
-    peak = max((abs(value) for value in buffer), default=1.0) or 1.0
-    scale = 0.86 / peak
+def kick(buffer, start, level=0.50):
+    """A triangle dropped from 190Hz to 45Hz in a tenth of a second.
+
+    A chip with three voices and no sampler made its kick drum this way,
+    stealing the bass channel for a frame or two. It is a swept oscillator, so
+    the phase has to be accumulated rather than taken from a fixed period.
+    """
+    samples = int(RATE * 0.11)
+    phase = 0.0
+    for index in range(samples):
+        seconds = index / float(RATE)
+        hertz = 145.0 * math.exp(-30.0 * seconds) + 45.0
+        phase += hertz / RATE
+        position = phase % 1.0
+        shape = 4.0 * abs(position - 0.5) - 1.0
+        offset = start + index
+        if offset < len(buffer):
+            buffer[offset] += shape * level * math.exp(-17.0 * seconds)
+
+
+def fade_edges(buffer, seconds=0.004):
+    """Take both ends to zero, so a file that loops does not click.
+
+    Every voice's own release already lands on silence at the end of its last
+    note, but nothing guarantees that the final sample is exactly zero, and a
+    step of a few hundred units at the loop point is audible as a tick.
+    """
+    span = max(1, int(RATE * seconds))
+    for index in range(min(span, len(buffer))):
+        ramp = index / float(span)
+        buffer[index] *= ramp
+        buffer[-1 - index] *= ramp
+
+
+def write(path, buffer, peak=0.86, loop=False):
+    """Centre, normalise to the given headroom, and write 16-bit mono.
+
+    A pulse wave narrower than 50% spends more of its period low than high, so
+    a track full of them sits below zero on average. On the chip that was
+    nobody's problem; through a sound card it is a constant offset that eats
+    headroom at one end and thumps when the file starts and stops. Taking the
+    mean out costs nothing audible and buys both back.
+    """
+    centre = sum(buffer) / float(len(buffer) or 1)
+    buffer = [value - centre for value in buffer]
+    # Both ends to zero, after centring rather than before it, so the two ends
+    # of a file that loops really do meet at the same sample value.
+    if loop:
+        fade_edges(buffer)
+    loudest = max((abs(value) for value in buffer), default=1.0) or 1.0
+    scale = peak / loudest
     frames = array.array("h", (int(max(-1.0, min(1.0, value * scale)) * 32767)
                                for value in buffer))
     if sys.byteorder == "big":
@@ -173,56 +222,275 @@ def build_levelup():
     underneath, so it has to be short and it has to end high.
     """
     steps = ["A4", "C5", "E5", "A5", "C6", "E6", "A6"]
-    total = int(RATE * 0.9)
+    lengths = [0.055] * (len(steps) - 1) + [0.30]
+    total = int(RATE * (sum(lengths) + 0.02))
     buffer = [0.0] * total
     cursor = 0.0
-    for index, note in enumerate(steps):
-        # The last note rings; the climb up to it is quick.
-        length = 0.30 if index == len(steps) - 1 else 0.055
-        start = int(RATE * cursor)
-        pulse(buffer, start, int(RATE * length), frequency(note), 0.32,
-              duty=0.5 if index % 2 == 0 else 0.25)
+    for index, (note, length) in enumerate(zip(steps, lengths)):
+        pulse(buffer, int(RATE * cursor), int(RATE * length), frequency(note),
+              0.32, duty=0.5 if index % 2 == 0 else 0.25)
         cursor += length
+    return buffer
+
+
+# ------------------------------------------------------------- the heal
+
+def build_heal():
+    """Eating something: a quick warm climb that lands and holds.
+
+    The opposite of the hit in every way that a chip can manage - no noise at
+    all, the thin 12.5% duty rather than the hollow square, and rising rather
+    than falling - so the two are never mistaken for each other in the middle
+    of a turn.
+    """
+    steps = [("E5", 0.05), ("A5", 0.05), ("C#6", 0.05), ("E6", 0.17)]
+    total = int(RATE * (sum(length for _, length in steps) + 0.02))
+    buffer = [0.0] * total
+    cursor = 0.0
+    for note, length in steps:
+        pulse(buffer, int(RATE * cursor), int(RATE * length), frequency(note),
+              0.34, duty=0.125)
+        cursor += length
+    triangle(buffer, 0, int(RATE * cursor), frequency("A3"), 0.16)
     return buffer
 
 
 # ------------------------------------------------------------- the fanfares
 
-VICTORY = [("A4", 1), ("A4", 1), ("A4", 1), ("A4", 3), ("F4", 1), ("G4", 1),
-           ("A4", 2), ("G4", 1), ("A4", 5)]
+# Both fanfares are written here rather than borrowed. The win climbs an A
+# major arpeggio, turns around on the sixth and lands on the octave; the loss
+# is the same idea walked downwards through A minor, half the speed, over a
+# bass that falls away underneath it.
 
-DEFEAT = [("A4", 3), ("G4", 1), ("F4", 3), ("E4", 1),
-          ("D4", 4), ("C4", 4), ("B3", 2), ("A3", 6)]
+VICTORY = [("E5", 1), ("A5", 1), ("C#6", 1), ("E6", 2), ("D6", 1), ("C#6", 1),
+           ("A5", 2), ("B5", 1), ("C#6", 1), ("E6", 2), ("A6", 6)]
+VICTORY_BASS = [("A2", 6), ("E2", 4), ("F#2", 2), ("D2", 2), ("E2", 2),
+                ("A2", 3)]
+
+DEFEAT = [("A4", 2), ("A4", 1), ("G4", 1), ("F4", 4), ("E4", 2), ("F4", 2),
+          ("D4", 4), ("E4", 2), ("C4", 2), ("B3", 2), ("A3", 8)]
+DEFEAT_BASS = [("A2", 8), ("D2", 4), ("G2", 4), ("C3", 4), ("E2", 4),
+               ("A2", 6)]
 
 
-def build_fanfare(pattern, step, bass_note, bright):
-    total = int(RATE * step * sum(length for _, length in pattern)) + RATE // 2
+def build_fanfare(pattern, bassline, step, bright, crash=False):
+    """A melody in the pulse voice over a bass that moves under it.
+
+    A single held bass note would be a drone; giving the bass a pattern of its
+    own is what makes eleven notes sound arranged rather than beeped.
+    """
+    units = sum(length for _, length in pattern)
+    total = int(RATE * step * units) + RATE // 2
     buffer = [0.0] * total
+
     cursor = 0.0
     for note, length in pattern:
         samples = int(RATE * step * length)
         start = int(RATE * cursor)
         pulse(buffer, start, samples, frequency(note), 0.34,
               duty=0.5 if bright else 0.25)
-        # An octave below in the harmony voice makes it sound arranged rather
-        # than beeped.
-        pulse(buffer, start, samples, frequency(note) / 2.0, 0.12, duty=0.25)
+        # An octave below in the harmony voice, quietly, for body.
+        pulse(buffer, start, samples, frequency(note) / 2.0, 0.11, duty=0.25)
         cursor += step * length
-    triangle(buffer, 0, int(RATE * cursor), frequency(bass_note), 0.16)
+
+    cursor = 0.0
+    for note, length in bassline:
+        samples = int(RATE * step * length)
+        triangle(buffer, int(RATE * cursor), samples, frequency(note), 0.20)
+        cursor += step * length
+
+    if crash:
+        noise(buffer, 0, int(RATE * 0.35), 0.22, 11.0, random.Random(11))
+    return buffer
+
+
+# --------------------------------------------------------------- the theme
+
+# A fast minor loop for the length of a fight: two bars of intro flourish and
+# then sixteen bars that come back round to them. Written here, note by note,
+# in the idiom rather than from one - the point of the exercise is that the
+# tune belongs to this repository.
+#
+# The shape:
+#
+#   bars  1-2   intro: a hammered A/G# trill, a run up the minor triad and a
+#               crash, so a fight opens on something rather than fading in
+#   bars  3-10  the A section: eight bars of sixteenths over i-VI-VII, ending
+#               on the dominant with its G# so it drives back to the top
+#   bars 11-18  the B section: longer notes, a higher register, a climb to A6
+#               and a scale walked back down to hand over to the intro
+#
+# The last bar is on E and the intro opens over A minor, so the end of the
+# file is a perfect cadence into its own beginning: the loop point is a bar
+# line, not a fade.
+
+TEMPO = 152.0                       # beats per minute: fast, not frantic
+SIXTEENTH = 60.0 / TEMPO / 4.0      # seconds in one sixteenth
+BAR = 16                            # sixteenths in a bar
+
+# Each chord names the root its bass walks around, the root the harmony voice
+# voices its stabs from, and the semitones of the triad.
+CHORDS = {
+    "Am": ("A2", "A4", (0, 3, 7)),
+    "Dm": ("D2", "D4", (0, 3, 7)),
+    "F":  ("F2", "F4", (0, 4, 7)),
+    "G":  ("G2", "G4", (0, 4, 7)),
+    "E":  ("E2", "E4", (0, 4, 7)),
+}
+
+# Eight eighth notes of bass per bar, as semitones above the chord's root.
+# Two patterns, alternating, so the bass walks instead of pumping.
+BASS_A = (0, 12, 0, 7, 0, 12, 7, 12)
+BASS_B = (0, 12, 7, 12, 0, 7, 12, 7)
+
+# Sixteenth positions in a bar. Kick on one and three with a push before
+# four, snare answering on two and four, hats straight through in eighths.
+KICKS = (0, 8, 11)
+SNARES = (4, 12)
+HATS = tuple(range(0, BAR, 2))
+
+INTRO = [
+    ("Am", [("A6", 2), ("G#6", 2), ("A6", 2), ("G#6", 2),
+            ("A6", 2), ("E6", 2), ("C6", 2), ("A5", 2)]),
+    ("E",  [("E5", 2), ("A5", 2), ("C6", 2), ("E6", 2),
+            ("A6", 4), ("-", 4)]),
+]
+
+SECTION_A = [
+    ("Am", [("A5", 2), ("E5", 2), ("A5", 2), ("C6", 2),
+            ("B5", 2), ("A5", 2), ("E5", 4)]),
+    ("Am", [("G5", 2), ("A5", 2), ("B5", 2), ("C6", 2),
+            ("D6", 4), ("C6", 2), ("B5", 2)]),
+    ("F",  [("A5", 2), ("F5", 2), ("A5", 2), ("C6", 2),
+            ("F6", 4), ("E6", 2), ("C6", 2)]),
+    ("G",  [("D6", 2), ("B5", 2), ("G5", 2), ("D6", 2),
+            ("B5", 4), ("G5", 2), ("A5", 2)]),
+    ("Am", [("A5", 2), ("E5", 2), ("A5", 2), ("C6", 2),
+            ("B5", 2), ("A5", 2), ("E5", 4)]),
+    ("F",  [("F5", 2), ("A5", 2), ("C6", 2), ("F6", 2),
+            ("E6", 4), ("C6", 4)]),
+    ("G",  [("G5", 2), ("B5", 2), ("D6", 2), ("G6", 2),
+            ("F6", 4), ("D6", 4)]),
+    ("E",  [("E6", 2), ("D6", 2), ("C6", 2), ("B5", 2),
+            ("G#5", 4), ("B5", 2), ("E6", 2)]),
+]
+
+SECTION_B = [
+    ("Dm", [("D6", 4), ("A5", 2), ("D6", 2), ("F6", 4), ("E6", 4)]),
+    ("E",  [("E6", 4), ("B5", 2), ("E6", 2), ("G#5", 4), ("B5", 4)]),
+    ("Am", [("A5", 4), ("C6", 2), ("E6", 2), ("A6", 6), ("-", 2)]),
+    ("Am", [("G6", 2), ("F6", 2), ("E6", 2), ("D6", 2),
+            ("C6", 4), ("B5", 4)]),
+    ("Dm", [("A5", 2), ("D6", 2), ("F6", 2), ("A6", 2),
+            ("G6", 4), ("F6", 4)]),
+    ("F",  [("E6", 2), ("C6", 2), ("A5", 2), ("F5", 2),
+            ("A5", 4), ("C6", 4)]),
+    ("E",  [("B5", 2), ("E6", 2), ("G#5", 2), ("B5", 2),
+            ("E6", 4), ("D6", 4)]),
+    ("E",  [("E6", 2), ("D6", 2), ("C6", 2), ("B5", 2),
+            ("A5", 2), ("G#5", 2), ("B5", 2), ("-", 2)]),
+]
+
+
+def at(bar_index, sixteenths):
+    """The sample a position in the score starts at."""
+    return int(RATE * SIXTEENTH * (bar_index * BAR + sixteenths))
+
+
+def lay_melody(buffer, bar_index, notes, duty, level):
+    """One bar of lead. A rest ("-") is a hole, not a note held over."""
+    cursor = 0
+    for note, length in notes:
+        if note != "-":
+            pulse(buffer, at(bar_index, cursor),
+                  int(RATE * SIXTEENTH * length), frequency(note), level,
+                  duty=duty)
+        cursor += length
+
+
+def lay_bass(buffer, bar_index, chord, pattern):
+    """Eight eighths of triangle, walking the chord rather than sitting on it."""
+    root = CHORDS[chord][0]
+    for step, semitones in enumerate(pattern):
+        triangle(buffer, at(bar_index, step * 2),
+                 int(RATE * SIXTEENTH * 1.9), frequency(root, semitones), 0.24)
+
+
+def lay_stabs(buffer, bar_index, chord):
+    """The second pulse voice, on the offbeats only.
+
+    Chords off the beat against a bass on it is what gives the whole thing its
+    push; line them up and it marches instead.
+    """
+    _, root, triad = CHORDS[chord]
+    for offset in (2, 6, 10, 14):
+        for semitones in triad[1:]:
+            pulse(buffer, at(bar_index, offset),
+                  int(RATE * SIXTEENTH * 1.2), frequency(root, semitones),
+                  0.085, duty=0.125)
+
+
+def lay_drums(buffer, bar_index, rng, fill=False):
+    for offset in HATS:
+        noise(buffer, at(bar_index, offset), int(RATE * 0.03), 0.10, 130.0, rng)
+    for offset in SNARES:
+        noise(buffer, at(bar_index, offset), int(RATE * 0.09), 0.30, 30.0, rng)
+    for offset in KICKS:
+        kick(buffer, at(bar_index, offset))
+    if fill:
+        # Three sixteenths of snare into the top of the loop, so the seam is
+        # something the drums walk over rather than a place the bar stops.
+        for offset in (13, 14, 15):
+            noise(buffer, at(bar_index, offset), int(RATE * 0.06), 0.34, 40.0,
+                  rng)
+
+
+def build_theme():
+    bars = INTRO + SECTION_A + SECTION_B
+    total = int(RATE * SIXTEENTH * BAR * len(bars))
+    buffer = [0.0] * total
+    rng = random.Random(1987)
+
+    for index, (chord, notes) in enumerate(bars):
+        intro = index < len(INTRO)
+        # The A section is the hollow 50% square and the B section the thinner
+        # 25% one: the trick a chip used to make a second eight bars sound
+        # like a second eight bars without changing a note.
+        duty = 0.5 if index < len(INTRO) + len(SECTION_A) else 0.25
+        lay_melody(buffer, index, notes, duty, 0.30 if intro else 0.33)
+        lay_bass(buffer, index, chord, BASS_A if index % 2 == 0 else BASS_B)
+        if not intro:
+            lay_stabs(buffer, index, chord)
+        lay_drums(buffer, index, rng, fill=index == len(bars) - 1)
+
+    # The intro opens on a crash, and nothing else in the loop does.
+    noise(buffer, 0, int(RATE * 0.45), 0.24, 9.0, random.Random(3))
     return buffer
 
 
 def main():
+    # The music sits under the one-shots rather than beside them: both
+    # channels play through the same player at the same volume, so the extra
+    # headroom here is what lets a hit land over the top of the theme.
+    theme = write(os.path.join(ASSETS, "battle-theme.wav"), build_theme(),
+                  peak=0.62, loop=True)
     hit = write(os.path.join(ASSETS, "battle-hit.wav"), build_hit())
     select = write(os.path.join(ASSETS, "battle-select.wav"), build_select())
-    levelup = write(os.path.join(ASSETS, "battle-levelup.wav"), build_levelup())
+    # The level-up sting is a bare square, so it is all RMS and no transient;
+    # at the same peak as the fanfare it plays over, it wins. Held back.
+    levelup = write(os.path.join(ASSETS, "battle-levelup.wav"), build_levelup(),
+                    peak=0.70)
+    heal = write(os.path.join(ASSETS, "battle-heal.wav"), build_heal())
     victory = write(os.path.join(ASSETS, "battle-victory.wav"),
-                    build_fanfare(VICTORY, 0.11, "A2", True))
+                    build_fanfare(VICTORY, VICTORY_BASS, 0.105, True,
+                                  crash=True))
     defeat = write(os.path.join(ASSETS, "battle-defeat.wav"),
-                   build_fanfare(DEFEAT, 0.17, "A2", False))
+                   build_fanfare(DEFEAT, DEFEAT_BASS, 0.13, False))
+    print("battle-theme.wav   %5.1fs" % theme)
     print("battle-hit.wav     %5.1fs" % hit)
     print("battle-select.wav  %5.1fs" % select)
     print("battle-levelup.wav %5.1fs" % levelup)
+    print("battle-heal.wav    %5.1fs" % heal)
     print("battle-victory.wav %5.1fs" % victory)
     print("battle-defeat.wav  %5.1fs" % defeat)
     return 0
