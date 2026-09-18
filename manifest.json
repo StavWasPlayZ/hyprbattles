@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "dev.cstav.omarchy.plugin.hyprbattles",
-  "name": "Window Battles",
+  "name": "Hyprland Pokemon Battles",
   "version": "1.0.0",
   "author": "stav",
   "license": "MIT",
