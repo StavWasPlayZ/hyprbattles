@@ -145,6 +145,15 @@ Panel {
     // appetite is bought with uptime and they have none.
     property var sleepingRows: []
     property var shelves: []
+    // The cards on screen right now, whichever list is showing. Named once
+    // so that the list and the thing that measures the badges are looking at
+    // the same rows - a badge sized against a list nobody is reading lines
+    // the cards up with the wrong column.
+    readonly property var listRows: view === "roster" ? rows
+        : (view === "sleeping" ? sleepingRows : [])
+    // One width for every type badge on screen: the widest of the type names
+    // actually listed, measured rather than guessed. See `badgeSizer`.
+    readonly property real badgeTextWidth: badgeSizer.textWidth
     property bool battlesOn: true
     property string selected: ""
     property string note: ""
@@ -657,12 +666,26 @@ Panel {
 
                 Row {
                     width: parent.width
-                    spacing: Style.spacing.sm
+                    // The badge, the face and the name are three different
+                    // kinds of thing, not three words of one sentence. At a
+                    // word's spacing the icon touched the chip on one side
+                    // and the name on the other and the whole line read as
+                    // one smudge; this is the gap that lets each of them be
+                    // seen on its own.
+                    spacing: Style.spacing.lg
 
                     // The type, as the colour it fights as.
                     Rectangle {
                         anchors.verticalCenter: parent.verticalCenter
-                        width: typeLabel.implicitWidth + Style.spacing.md * 2
+                        // Every badge on the list is the same width - the
+                        // widest type name on it - so the faces and the
+                        // names start at one x down the whole column
+                        // instead of stepping in and out with the length of
+                        // a word. Its own text is the floor: the card pinned
+                        // above the food has no list to line up with.
+                        width: Math.max(typeLabel.implicitWidth,
+                                        root.badgeTextWidth)
+                               + Style.spacing.md * 2
                         height: typeLabel.implicitHeight + Style.spacing.xs * 2
                         radius: Style.cornerRadius
                         color: creature.tint
@@ -860,6 +883,60 @@ Panel {
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                 }
+            }
+        }
+    }
+
+    // What the badges are all as wide as. NET, CHAT and AGENT are three
+    // different lengths, so a chip cut to its own word puts every card's
+    // face and name at a different x and the column comes out ragged. The
+    // width has to be the real one - a pixel guess is wrong on the next
+    // theme, and padding the word with spaces is a lie the badge's own
+    // background gives away - so the type names on the list are laid out
+    // once, unseen, in the badge's own font, and the badges take the widest.
+    //
+    // It lives out here rather than on a card because it is a fact about the
+    // list, not about any one row, and a card is thrown away and rebuilt as
+    // the list scrolls.
+    Item {
+        id: badgeSizer
+
+        visible: false
+        width: 0
+        height: 0
+
+        // `itemAt()` is a function and not a property, so the measurement
+        // below cannot notice the repeater filling itself in. This can, and
+        // the measurement reads it first.
+        property int generation: 0
+
+        readonly property real textWidth: {
+            var seen = badgeSizer.generation
+            var widest = 0
+            for (var i = 0; i < badgeTexts.count; i++) {
+                var item = badgeTexts.itemAt(i)
+                // Reading each width here is what binds the answer to it,
+                // so a row that changes type re-measures on its own.
+                if (item) widest = Math.max(widest, item.implicitWidth)
+            }
+            return widest
+        }
+
+        Repeater {
+            id: badgeTexts
+
+            model: root.listRows
+            onItemAdded: badgeSizer.generation++
+            onItemRemoved: badgeSizer.generation++
+
+            Text {
+                visible: false
+                text: String((modelData && modelData.type) || "")
+                // The badge's font, exactly, or the width measured is not
+                // the width drawn.
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
             }
         }
     }
@@ -1215,8 +1292,7 @@ Panel {
                     }
 
                     Repeater {
-                        model: root.view === "roster" ? root.rows
-                             : (root.view === "sleeping" ? root.sleepingRows : [])
+                        model: root.listRows
 
                         WindowCard {
                             row: modelData
