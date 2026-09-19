@@ -91,6 +91,11 @@ PAD_COLLISION_EVENT = "dev.cstav.omarchy.plugin.hyprscroll2d-gamepad:collision"
 COLLISION_DEDUP = 0.5
 
 BATTLE_COOLDOWN = 6.0       # quiet period after one, so they do not stack
+# How often every open window is written down again. Slow on purpose: the
+# only thing it catches that `openwindow` does not is a window that has
+# *become* something else - a terminal somebody has since started an agent
+# in - and nothing is lost by hearing about that a minute late.
+CENSUS_INTERVAL = 60.0
 # A wild window appeared: both motors flat out for a second. The gamepad
 # daemon caps what a client may ask for, so this is close to that ceiling.
 ENCOUNTER_RUMBLE_MS = 1000
@@ -350,6 +355,8 @@ class Daemon:
         self.event_retry = 0.0
         self.control_socket = None
         self.pad_registered = False
+        # When the roll call comes round again; see census().
+        self.census_at = 0.0
 
     # ------------------------------------------------------------ enabled
 
@@ -839,6 +846,43 @@ class Daemon:
             log("cannot read the roster: %s" % error)
             return [], []
 
+    def census(self, windows=None):
+        """Give every window now open a record, so that shutting one leaves
+        something behind to sleep.
+
+        A record used to be written only when a window fought, was fed, or
+        was looked at through the panel, and `roster()` still writes one for
+        everything it sees. That was too late: a window opened and closed
+        between two glances at the panel was never anything, so the sleeping
+        list only ever held what somebody had happened to be looking at.
+        This runs at startup, on every `openwindow`, and on a slow timer -
+        the timer because a window is not always what it will be: a terminal
+        becomes an agent when you start one in it, minutes after it opened,
+        and nothing on the event socket says so.
+        """
+        try:
+            self.creatures.load()
+            if windows is None:
+                windows = self.hypr.query("clients") or []
+            self.creatures.touch(windows)
+        except Exception as error:
+            log("cannot write down an open window: %s" % error)
+
+    def note_open(self, payload):
+        """`openwindow>>address,workspace,class,title`.
+
+        The class rides in the event, so a window opening costs no round trip
+        to the compositor - and it is the class at launch, which is the name
+        a creature is remembered under anyway.
+        """
+        parts = payload.split(",")
+        if len(parts) < 3:
+            return
+        name = parts[2].strip()
+        if not name:
+            return
+        self.census([{"initialClass": name, "class": name}])
+
     def feed(self, address, shelf_key, now):
         """Feed one window from the panel. The one thing in this daemon that
         changes a creature without a fight - and still nothing that changes a
@@ -1071,6 +1115,14 @@ class Daemon:
         now = time.monotonic()
         for line in lines:
             name, _, data = line.decode(errors="replace").partition(">>")
+            if name == "openwindow":
+                # A surprise in the payload must not cost the event loop
+                # here either.
+                try:
+                    self.note_open(data)
+                except Exception as error:
+                    log("window not written down: %s" % error)
+                continue
             if name != "custom":
                 continue
             for event, source in ((PAD_COLLISION_EVENT, "pad"),
@@ -1104,6 +1156,7 @@ class Daemon:
                 deadlines.append(deadline)
         if self.pad.held:
             deadlines.append(self.pad.renew_at)
+        deadlines.append(self.census_at)
         if not self.event_stream:
             deadlines.append(self.event_retry)
         if not deadlines:
@@ -1116,6 +1169,10 @@ class Daemon:
         self.connect_events()
         self.sound.sweep()
         self.recover()
+        # Everything already open when the daemon starts, so a machine that
+        # has never had the panel opened still knows what it is running.
+        self.census()
+        self.census_at = time.monotonic() + CENSUS_INTERVAL
         # Write "no battle" once at startup: the overlay watches this file,
         # and a watch on a path that does not exist yet never fires.
         self.publish()
@@ -1144,6 +1201,13 @@ class Daemon:
             self.pad.tick(now)
             self.tick_battle(now)
             self.tick_scene(now)
+            if now >= self.census_at:
+                # Never during a fight: the roll call is a window list and a
+                # tree of /proc reads, and nothing but the battle should be
+                # using the machine while the battle is on screen.
+                self.census_at = now + CENSUS_INTERVAL
+                if not self.battle and not self.scene:
+                    self.census()
             if not self.event_stream and now >= self.event_retry:
                 self.connect_events()
 

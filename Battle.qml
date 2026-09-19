@@ -72,9 +72,9 @@ Item {
     // theme, so these do not follow one. All are mid tones, chosen to take
     // dark label text and to sit on a light or a dark background.
     readonly property var typeColors: ({
-        "SHELL": "#5fb37a", "CODE": "#5f97d8", "NET": "#9a86e0",
-        "CHAT": "#d8a04a", "MEDIA": "#d86e9a", "GAME": "#dc6a6a",
-        "GLASS": "#6fb8bb"
+        "SHELL": "#5fb37a", "AGENT": "#9cbf52", "CODE": "#5f97d8",
+        "NET": "#9a86e0", "CHAT": "#d8a04a", "MEDIA": "#d86e9a",
+        "GAME": "#dc6a6a", "GLASS": "#6fb8bb"
     })
 
     // What the text box says while the pantry is open: the highlighted

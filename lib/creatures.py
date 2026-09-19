@@ -20,9 +20,16 @@ a minute ago has almost none. Uptime comes from `/proc/<pid>/stat`, not from
 anything this daemon wrote down, so it survives a daemon restart and cannot
 be farmed by reopening the panel.
 
-Reading here is read-only in the same sense `lib/pantry.py` is - one counter
-field out of `/proc`, no file contents - but this module does write, to its
-own file and nowhere else: `~/.local/state/hyprscroll2d/creatures.json`.
+**And what is it running?** A terminal with Claude Code or Codex in it is an
+agent rather than a terminal, and neither its class nor its title says so -
+the class is `foot` and the title is the name of your work. So the process
+tree under the window is walked instead (`agent_of`), which is the same rule
+every other number here follows: a reading of something real.
+
+Reading here is read-only in the same sense `lib/pantry.py` is - counters,
+`comm` and `cmdline` out of `/proc`, nothing a `ps` would not print - but
+this module does write, to its own file and nowhere else:
+`~/.local/state/hyprscroll2d/creatures.json`.
 """
 
 import json
@@ -38,7 +45,7 @@ STORE_PATH = os.path.join(STATE_HOME, "hyprscroll2d", "creatures.json")
 MAX_APPETITE_ENTRIES = 400
 
 
-def species_key(window):
+def species_key(window, proc="/proc"):
     """The name a creature is remembered under: its launch class, folded.
 
     One answer, in the rules, because the same key is what its stats are hung
@@ -46,8 +53,35 @@ def species_key(window):
     the initial one - a browser that renames itself after the site it is
     showing must not become a different creature halfway through the
     afternoon.
+
+    The exception is an agent, which has no class of its own because it is
+    not a window - so the window is asked what it is *running* first (see
+    `agent_of`), and the answer is written onto the window dict as `agent`.
+    The rules are pure and cannot go looking; stamping it here means every
+    question that follows - the record, the type, the name, the stats - is
+    asked of the same window and gets the same answer. This is the choke
+    point on purpose: everything that turns a window into a creature comes
+    through a record first.
     """
+    if isinstance(window, dict) and "agent" not in window:
+        window["agent"] = agent_in_window(window, proc)
     return rules.species_key(window)
+
+
+# This plugin's own windows are not creatures. Nothing it draws is a client
+# today - the overlay and the panel are both layer surfaces - but anything it
+# ever does put on screen is scaffolding for the game, and scaffolding that
+# fights, eats and sleeps is the game reading itself. The same rule the
+# pantry follows: a number has to be a reading of something real, and a
+# window this plugin opened is a reading of this plugin.
+OUR_NAME = "hyprbattles"
+
+
+def ours(key):
+    """Is this class one of ours? A substring, not a prefix: the plugin's
+    own id is reverse-DNS (`dev.cstav.omarchy.plugin.hyprbattles`) and
+    anything it spawns is named after it at one end or the other."""
+    return OUR_NAME in str(key or "").strip().lower()
 
 
 def sleeping_window(key):
@@ -123,6 +157,149 @@ def instance_key(pid, proc="/proc"):
     return "%d:%d" % (int(pid), int(started))
 
 
+# ------------------------------------------------------------------- agents
+#
+# Claude Code, Codex and the rest are not windows. They run inside a terminal
+# that goes on calling itself foot, and the title they set is the name of
+# whatever you are working on - "Sleeping windows persistence" - not their
+# own. So the only honest place left to look is the process tree: the window
+# has a pid, the agent is one of its descendants, and `/proc/<pid>/comm` says
+# `claude` in as many letters.
+#
+# That is a reading of something real, the way every other number here is,
+# and it costs a handful of small files under /proc. It is also the only
+# thing in this module that reads a process it did not start - kept to comm
+# and cmdline, both of which `ps` prints for anyone who asks.
+
+AGENT_SCAN_DEPTH = 8        # foot -> shell -> agent, with room for tmux, ssh
+AGENT_SCAN_LIMIT = 96       # processes looked at before giving up
+AGENT_CACHE_SECONDS = 4.0   # a tree is walked at most this often per window
+
+# Interpreters that are never the agent: when one of these is the command,
+# what it is running is (`node .../codex`, `python -m aider`).
+AGENT_RUNNERS = ("node", "nodejs", "bun", "deno", "python", "python3", "uv",
+                 "uvx", "npx", "pnpm", "ruby", "perl", "sh", "bash", "zsh")
+
+_agent_cache = {}
+
+
+def _children(pid, proc="/proc"):
+    """The pids this one has spawned, out of `/proc/<pid>/task/*/children`."""
+    kids = []
+    tasks = os.path.join(proc, str(int(pid)), "task")
+    try:
+        names = os.listdir(tasks)
+    except OSError:
+        return kids
+    for tid in names:
+        try:
+            with open(os.path.join(tasks, tid, "children")) as handle:
+                text = handle.read()
+        except OSError:
+            continue
+        for part in text.split():
+            if part.isdigit():
+                kids.append(int(part))
+    return kids
+
+
+def _names_of(pid, proc="/proc"):
+    """What a process calls itself: its comm, and the command it was given.
+
+    Both, because a tool installed as a script says its own name in comm
+    (`claude`) while one launched through an interpreter hides behind it
+    (`node .../codex.js`), and either is a fair answer to "what is running
+    in that terminal".
+    """
+    names = []
+    try:
+        with open(os.path.join(proc, str(int(pid)), "comm")) as handle:
+            names.append(handle.read().strip().lower())
+    except (OSError, ValueError):
+        pass
+    try:
+        with open(os.path.join(proc, str(int(pid)), "cmdline")) as handle:
+            argv = [part for part in handle.read().split("\0") if part]
+    except (OSError, ValueError):
+        argv = []
+    # Only the command and its first argument, and every step of the path
+    # they name: an agent started through an interpreter is somewhere in
+    # `/usr/lib/node_modules/codex/cli.js` and nowhere else on the line.
+    # Whole steps, never a substring, so the snapshot directory every shell
+    # of mine sources - `~/.claude/shell-snapshots/...` - is not an agent.
+    for word in argv[:2]:
+        for step in word.strip().lower().split("/"):
+            if step.endswith(".js") or step.endswith(".py"):
+                step = step.rsplit(".", 1)[0]
+            if not step or step in AGENT_RUNNERS:
+                continue
+            names.append(step)
+    return names
+
+
+def agent_of(pid, proc="/proc"):
+    """Which agent is running under this window's process, or "".
+
+    Breadth first, because the agent is usually two steps down and a busy
+    shell can have a deep tail of its own; bounded in both directions so a
+    runaway tree costs a shrug rather than the panel.
+    """
+    try:
+        root = int(pid)
+    except (TypeError, ValueError):
+        return ""
+    # The directory goes in the key as well: a test hands this a /proc of
+    # its own with the same pid in it as the last one did.
+    key = (proc, instance_key(root, proc) or str(root))
+    now = time.monotonic()
+    cached = _agent_cache.get(key)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    found = ""
+    seen = 0
+    frontier = _children(root, proc)
+    for _ in range(AGENT_SCAN_DEPTH):
+        if found or not frontier:
+            break
+        following = []
+        for child in frontier:
+            seen += 1
+            if seen > AGENT_SCAN_LIMIT:
+                break
+            for name in _names_of(child, proc):
+                tool = rules.AGENT_TOOLS.get(name)
+                if tool:
+                    found = tool
+                    break
+            if found:
+                break
+            following.extend(_children(child, proc))
+        if seen > AGENT_SCAN_LIMIT:
+            break
+        frontier = following
+
+    _agent_cache[key] = (now + AGENT_CACHE_SECONDS, found)
+    if len(_agent_cache) > MAX_APPETITE_ENTRIES:
+        _agent_cache.clear()
+    return found
+
+
+def agent_in_window(window, proc="/proc"):
+    """The agent this window is running. Terminals only: a browser showing
+    claude.ai is a browser, and a window with no pid is not running
+    anything this machine can see."""
+    window = window or {}
+    if rules.type_of(window.get("initialClass") or window.get("class")) != "SHELL":
+        return ""
+    pid = window.get("pid")
+    if not pid:
+        # No pid means a sleeping creature or a fixture: the title is all
+        # there is, and the rules read that themselves.
+        return ""
+    return agent_of(pid, proc)
+
+
 # ------------------------------------------------------------------- store
 
 class Store:
@@ -173,7 +350,13 @@ class Store:
     def _sweep(self):
         """Forget what has eaten its last meal: an appetite entry whose window
         is gone. The key carries the start time, so a pid that came back as
-        something else does not keep the old entry alive."""
+        something else does not keep the old entry alive.
+
+        Also forget anything of ours that an older version wrote down, so the
+        exemption cleans up after itself rather than needing the file edited
+        by hand."""
+        for key in [key for key in self.species if ours(key)]:
+            del self.species[key]
         alive = {}
         for key, value in self.appetite.items():
             pid, _, started = str(key).partition(":")
@@ -192,7 +375,7 @@ class Store:
 
     def record(self, window):
         """What this window's class has earned so far. Never None."""
-        key = species_key(window)
+        key = species_key(window, self.proc)
         entry = self.species.get(key)
         if not isinstance(entry, dict):
             entry = {}
@@ -228,7 +411,9 @@ class Store:
         for window in windows or []:
             if not isinstance(window, dict):
                 continue
-            key = species_key(window)
+            key = species_key(window, self.proc)
+            if ours(key):
+                continue
             entry = self.species.get(key)
             if not isinstance(entry, dict):
                 self.species[key] = {"xp": 0, "wins": 0, "losses": 0,
@@ -367,7 +552,7 @@ def roster(clients, store, larder=None, now=None, proc="/proc"):
     except Exception:
         shelves = []
     for window in clients or []:
-        if not isinstance(window, dict):
+        if not isinstance(window, dict) or ours(species_key(window, proc)):
             continue
         record = store.record(window)
         creature = rules.creature(window, record)
@@ -437,11 +622,11 @@ def sleeping(clients, store, now=None):
     in this plugin is a reading of something real - uptime, free memory, dead
     processes - and a closed window produces nothing real to read.
     """
-    awake = {species_key(window) for window in clients or []
+    awake = {species_key(window, store.proc) for window in clients or []
              if isinstance(window, dict)}
     rows = []
     for key in sorted(store.species):
-        if key in awake:
+        if key in awake or ours(key):
             continue
         window = sleeping_window(key)
         record = store.record(window)

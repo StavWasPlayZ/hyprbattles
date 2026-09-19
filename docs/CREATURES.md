@@ -23,6 +23,23 @@ It is also deliberately the *launch* class rather than the live one, so a
 browser that renames itself after the site it is showing is still the same
 creature at teatime as it was at breakfast.
 
+One exception, and it is the same rule read honestly: a terminal running a
+coding agent is remembered as the **agent** - `claude`, `codex`, `aider` and
+the rest, found by walking the process tree under the window (see
+[BATTLES.md](BATTLES.md)). An agent has no class of its own to be remembered
+under, and what that window *is* while the agent is in it is not a terminal.
+So every `claude` session is one creature wherever it runs, the terminal goes
+back to being `foot` when the agent exits, and both keep their own record.
+Agent desktop apps have a class like everything else and need none of this.
+
+The tree is walked once per window per record lookup and the answer is
+written onto the window as `agent`, so the type, the name and the stats are
+all asked of the same window and cannot disagree. The daemon also takes the
+roll call again every minute rather than only on `openwindow`: a terminal
+becomes an agent minutes after it opened, and nothing on the event socket
+says so - without that, an agent would never reach the sleeping list unless
+somebody happened to open the panel while it was running.
+
 The honest consequence: **every window of a class is the same creature.** Two
 terminals are one creature open twice, the way two of the same monster are
 the same monster. Feeding one feeds "terminals". If that ever stops feeling
@@ -101,6 +118,22 @@ learns how.
 Closing a window does not end its creature; it puts it down. The record is
 still there, so the panel lists them - at the bottom of the windows, under
 **Sleeping windows**, most recently open first.
+
+The list is **everything the record book holds**, not just what you were
+looking at. A window earns its record the moment it opens: the daemon writes
+one down for every window already open when it starts, and one for every
+`openwindow` the compositor reports after that - the class rides in the
+event, so it costs no round trip. Opening the panel writes them too, which is
+all that used to happen, and that was too late: something opened and closed
+between two glances at the panel was never anything and could never sleep.
+The book is `creatures.json`, so the list survives a restart of the daemon,
+the shell and the machine.
+
+**This plugin's own windows are exempt.** Anything whose class carries
+`hyprbattles` never earns a record, never shows on the roster and never
+sleeps, and a record of one that an older version wrote down is swept out of
+the book on the next save. It is the game, not a player in it - the same rule
+the pantry follows, that a number has to be a reading of something real.
 
 A sleeping creature keeps everything it earned: its level, its stage, its
 record, its meals and its moves. What it does not have is an **appetite**,
@@ -214,7 +247,20 @@ per evolution, the level, the record, how long the window has been up, how far
 it is from the next level, and a bar for how much appetite it has left. The
 icon is looked up the way the rest of the shell looks one up - the desktop
 entry for the class, then the class as an icon name - and a window that has
-none simply shows its type chip, as it did before. On the right of each card is the
+none simply shows its type chip, as it did before.
+
+An agent has no desktop entry to look up, so it wears **the face Omarchy
+already gives it**: the coloured mark from the shell's own agents panel
+(`shell/plugins/agents/assets/<agent>.svg`, with the `-light` twin on a light
+theme, exactly as that panel chooses it) and, for the agents that ship no
+mark, the glyph from the menu row that asks you to pick a default agent -
+some from the icon font, some from Omarchy's own `omarchy` font. The
+candidates are tried in order and the glyph is what is left when none of them
+loaded. This is why the agent names here are Omarchy's names: `claude`,
+`codex`, `copilot`, `crush`, `cursor-agent`, `gemini`, `grok`, `hermes`,
+`muse`, `omp`, `openclaw`, `opencode` and `pi`, plus `aider`, `goose` and
+`qwen-code`, which Omarchy does not offer but people run anyway and which
+wear the menu's generic agent glyph. On the right of each card is the
 one action a card has: **Feed**. The button is plain on every card - the type
 colour means "what this window fights as", and a button wearing it would be
 saying something it does not mean.

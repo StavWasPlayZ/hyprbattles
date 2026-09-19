@@ -174,22 +174,64 @@ always meet as the same two creatures.
 
 ### Types
 
-Seven, named after what windows do rather than after the elements of any
+Eight, named after what windows do rather than after the elements of any
 particular game, arranged in a ring. Each type hits the next one for double and
 bounces off the one before it for half:
 
 ```
-SHELL -> CODE -> NET -> CHAT -> MEDIA -> GAME -> GLASS -> SHELL
+SHELL -> AGENT -> CODE -> NET -> CHAT -> MEDIA -> GAME -> GLASS -> SHELL
 ```
 
 A ring is easy to hold in your head after two battles, and unlike a
 hand-written chart it cannot accidentally produce a type that loses to
 everything - each type is weak to exactly one other and resists exactly one.
 
-`SHELL` is terminals, `CODE` is editors and IDEs, `NET` is browsers, `CHAT` is
-messaging and mail, `MEDIA` is players and creative tools, `GAME` is games,
-launchers and engines, and `GLASS` is every window that is nothing more
-interesting than a window. Unrecognised classes are `GLASS`.
+`SHELL` is terminals, `AGENT` is coding agents and AI apps, `CODE` is editors
+and IDEs, `NET` is browsers, `CHAT` is messaging and mail, `MEDIA` is players
+and creative tools, `GAME` is games, launchers and engines, and `GLASS` is
+every window that is nothing more interesting than a window. Unrecognised
+classes are `GLASS`.
+
+The ring puts `AGENT` where it belongs in the argument: the terminal that
+hosts it can always pull the plug (`SHELL` beats `AGENT`), and the agent
+rewrites the editor's work for it (`AGENT` beats `CODE`).
+
+`AGENT` is the one type that is not read off the class alone. Claude Code,
+Codex and the rest are not windows - they run *inside* a terminal, and the
+terminal goes on calling itself `foot`. Their titles are no help either:
+Claude Code sets the terminal title to a summary of what you are doing
+("Sleeping windows persistence"), which names everything except itself.
+
+So for a window that is already a `SHELL`, the **process tree** under its pid
+is walked instead (`creatures.agent_of`): breadth first, eight steps down at
+most, reading `comm` and `cmdline` - `foot` -> `bash` -> `claude`. A tool
+started through an interpreter is found by the path it was given, whole step
+by whole step, so `node .../codex/cli.js` is `codex` while the snapshot
+directory every shell sources, `~/.claude/shell-snapshots/`, is nothing.
+The names known are Omarchy's own, from the menu row that asks you to pick a
+default agent - `claude`, `codex`, `copilot`, `crush`, `cursor-agent`,
+`gemini`, `grok`, `hermes`, `muse`, `omp`, `openclaw`, `opencode`, `pi` -
+plus `aider`, `goose` and `qwen-code`. Taking the desktop's list rather than
+inventing one is also what lets the panel draw the desktop's icons (see
+[CREATURES.md](CREATURES.md)).
+
+A command-line agent is matched by its **whole** name, never as a substring:
+"pi" is inside Epiphany and Pidgin, and an agent called `pi` is the word and
+nothing else. Only the desktop apps are matched loosely, by class.
+
+The title is still read, but only as a fallback for a session this machine
+cannot see into - an agent over `ssh` has its process tree on the other
+machine - and then whole words only, so `vim claude_notes.md` is a terminal
+editing a file. Only terminals are asked either way, so a browser tab called
+"Claude" is a browser. The desktop apps - Claude, ChatGPT, Codex, Ollama and
+friends - announce themselves in their class like everything else, and are
+matched before `CODE` and `CHAT` because "codex" contains "code" and
+"chatgpt" contains "chat".
+
+A terminal is therefore an `AGENT` while an agent is running in it and a
+`SHELL` again when it exits - and it is remembered as the agent, not as the
+terminal, so every `claude` session shares one record no matter which
+terminal it is in. See [CREATURES.md](CREATURES.md).
 
 ### Damage
 
@@ -480,7 +522,7 @@ and carries no licence. Lowercase is folded to uppercase on the way in, the way
 the machines this is imitating did.
 
 Everything but the deliberate accents comes from the theme, so it reads on a
-light desktop and a dark one. The accents are the seven type colours and the
+light desktop and a dark one. The accents are the eight type colours and the
 green/amber/red of the HP bar, which have to mean the same thing everywhere.
 
 The bar is hidden for the length of the battle and comes back afterwards -

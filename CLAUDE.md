@@ -52,11 +52,11 @@ no pad and no screen:
 | Layer | File | Owns |
 | --- | --- | --- |
 | Rules | `lib/battle_rules.py` | Creatures, types, damage, turn loop, menus, timeouts, and the progression maths - experience, stages, appetite - plus the `Evolution` scene. **Zero I/O.** Emits a snapshot dict after every change. |
-| Records | `lib/creatures.py` | What a window class has earned, what one live window has eaten, window uptime off `/proc`, and the roster/feed the daemon and the CLI share. The only module here that writes anything but a ledger. |
+| Records | `lib/creatures.py` | What a window class has earned, what one live window has eaten, window uptime and the agent running in a window off `/proc`, and the roster/feed the daemon and the CLI share. The only module here that writes anything but a ledger. |
 | Moves | `lib/window_moves.py` | Which command moves a window one cell per layout, and whether a move swapped two windows. **Zero I/O.** |
 | Wiring | `bin/battles` (daemon) | Sockets, sound, pad lease, bar toggle, the roll, publishing the snapshot. |
 | Picture | `Battle.qml` + `BattleFighter/BattleStatusBox/BattleTypeChip/PixelText.qml` | Draws the snapshot and nothing else. Two scenes: `scene: "battle"` and `scene: "evolve"`. |
-| Panel | `Roster.qml` (bar widget) | The switch, one card per window, and the food. Reads `battles-ctl roster --json`, writes through `battles-ctl feed`. Cannot reach a window. |
+| Panel | `Roster.qml` (bar widget) | The switch, one card per window, and the food. Reads `battles-ctl roster --json`, writes through `battles-ctl feed`. Cannot reach a window. Agent cards wear Omarchy's own marks (`shell/plugins/agents/assets/*.svg`, then the default-agent menu glyph), which is why the agent names are Omarchy's names. |
 
 Data flow: daemon writes `$XDG_RUNTIME_DIR/hyprscroll2d-battle.json` after every
 change → `Battle.qml` watches that file. Input goes the other way: the overlay
@@ -120,6 +120,20 @@ Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
   Addresses are recycled; a record kept under one would be lost on restart and
   then inherited by a stranger. An *appetite* is per window, keyed by pid and
   process start time, and swept when the window dies.
+- **The one class a window can borrow is the agent running in it.** Claude
+  Code and Codex are not windows, and their titles name your work rather than
+  themselves, so `AGENT` is found by walking the process tree under a
+  terminal's pid (`creatures.agent_of`, comm and cmdline, breadth first and
+  bounded) and stamped onto the window as `agent`; `rules.agent_tool` stays
+  pure and reads the stamp, falling back to title words for a session over
+  ssh. `creatures.species_key` is the one place that stamps, because every
+  question about a creature comes through a record first. A terminal is an
+  `AGENT` named `claude` while one runs and a `SHELL` named `foot` again
+  afterwards, each with its own record. Only a `SHELL` is ever asked (a
+  browser on claude.ai is a browser, and `org.omarchy.agent` is a polkit
+  agent), and every tool name must itself read back as `AGENT` through
+  `type_of`, or a sleeping agent - which has nothing left but its key - would
+  change type when its window shut. Tests pin both.
 - **A creature always carries four moves, at least two of its own type, and
   all of them ones it has learned** (`Learning`). A record that says otherwise
   is ignored in favour of the derived four - `carried()` decides, nothing
@@ -147,6 +161,11 @@ Files, because the Omarchy menu row's `checked` condition and `battles-ctl`
 must answer while the shell is restarting. `battles-ctl` reads/writes them
 directly and only *nudges* the daemon afterwards.
 
+`creatures.json` is also the sleeping list: the daemon writes a record for
+every window open at startup and for every `openwindow` event (class taken
+from the event payload, no IPC query), so every class the machine has ever
+run is on that list once its windows are shut, restarts included.
+
 ## Sound and assets
 
 All eight WAVs are synthesised by `bin/make-battle-audio` from the stdlib
@@ -160,7 +179,7 @@ file by mode (`auto`/`generated`/`custom`), overridable for one run with
 ## Conventions
 
 - QML colours come from `qs.Commons` (`Color.*`) so battles read on any theme.
-  The only hardcoded colours are the seven type colours and the HP bar's
+  The only hardcoded colours are the eight type colours and the HP bar's
   green/amber/red, which must mean the same thing everywhere.
 - Lettering is the original 5×7 font in `PixelText.qml`, drawn square by square
   on a Canvas — no font files.

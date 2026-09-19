@@ -18,16 +18,18 @@ worst this module can ask for is that two windows swap places.
 
 import math
 import random
+import re
 
 # ------------------------------------------------------------------- types
 #
-# Seven types, named after what windows actually do rather than after the
+# Eight types, named after what windows actually do rather than after the
 # elements of any particular game. They form a ring: each type hits the next
 # one hard and bounces off the one before it. A ring is easy to hold in your
 # head after two battles, and it cannot produce an unwinnable matchup the way
 # a hand-written chart can.
 
-TYPES = ("SHELL", "CODE", "NET", "CHAT", "MEDIA", "GAME", "GLASS")
+TYPES = ("SHELL", "AGENT", "CODE", "NET", "CHAT", "MEDIA", "GAME",
+         "GLASS")
 
 SUPER_EFFECTIVE = 2.0
 NOT_VERY_EFFECTIVE = 0.5
@@ -35,10 +37,20 @@ STAB = 1.5              # same-type attack bonus
 CRITICAL_CHANCE = 1 / 16.0
 CRITICAL_MULTIPLIER = 1.5
 
-# Substrings matched against the window class, most specific first. Anything
-# that matches nothing is GLASS, which is the type every desktop window shares
+# Substrings matched against the window class, most specific first. AGENT is
+# the only one that is also read out of a title (see `agent_tool`), because
+# the desktop app and the terminal session are the same creature and only one
+# of them has a class worth reading. Anything that matches nothing is GLASS, which is the type every desktop window shares
 # when it is nothing more interesting than a window.
 CLASS_TYPES = (
+    # First, because most of these names contain another type's needle:
+    # "codex" holds "code", "chatgpt" holds "chat", and a coding agent is
+    # neither of those things. These are the desktop apps; the command-line
+    # agents are matched by their whole name instead (see AGENT_KEYS), which
+    # is the only safe way to know an agent called "pi".
+    ("AGENT", ("claude", "codex", "chatgpt", "copilot", "gemini",
+               "perplexity", "librechat", "openwebui", "lmstudio",
+               "lm-studio", "ollama", "msty", "openai", "anthropic")),
     ("SHELL", ("foot", "alacritty", "kitty", "ghostty", "wezterm", "urxvt",
                "xterm", "terminal", "konsole", "tilix", "term")),
     ("CODE", ("code", "vscodium", "jetbrains", "idea", "pycharm", "webstorm",
@@ -64,11 +76,97 @@ CLASS_TYPES = (
 def type_of(window_class):
     """The type a window class fights as."""
     name = str(window_class or "").lower()
+    # A command-line agent is its whole name and nothing less. As a substring
+    # "pi" is in Epiphany and Pidgin, "omp" is in a dozen things, and the
+    # agent this plugin means is exactly the word - which is also the key it
+    # is remembered under, so this is the same match either way round.
+    if name.strip() in AGENT_KEYS:
+        return "AGENT"
     for kind, needles in CLASS_TYPES:
         for needle in needles:
             if needle in name:
                 return kind
     return "GLASS"
+
+
+# An agent is the one type that cannot be read off a window class, because
+# an agent is not a window: Claude Code, Codex and the rest run *inside* a
+# terminal, and the terminal goes on calling itself foot. The only place the
+# tool shows up is the title it sets while it is working, so that is what is
+# read - but only for a window that is already a terminal. A browser tab
+# called "Claude" is a browser, and the agent's own desktop app is matched by
+# its class above like everything else.
+#
+# The tool a title names is also the name the creature is remembered under
+# (`species_key`), so the same terminal is the same creature every time it
+# runs the same agent - and goes back to being a terminal when the agent
+# exits. That is the honest reading: what a window *is* here has always been
+# what it is doing, and a terminal running an agent is doing something else.
+# The names are Omarchy's own, from the agent it asks you to pick in
+# `omarchy-menu` - so a creature is called what the desktop already calls it,
+# and the panel can draw the mark the desktop already draws for it. The last
+# few are ones Omarchy does not offer but people run anyway.
+AGENT_TOOLS = {
+    "claude": "claude",
+    "claude-code": "claude",
+    "claudecode": "claude",
+    "codex": "codex",
+    "copilot": "copilot",
+    "crush": "crush",
+    "cursor-agent": "cursor-agent",
+    "gemini": "gemini",
+    "gemini-cli": "gemini",
+    "grok": "grok",
+    "hermes": "hermes",
+    "muse": "muse",
+    "omp": "omp",
+    "openclaw": "openclaw",
+    "opencode": "opencode",
+    "pi": "pi",
+    "aider": "aider",
+    "goose": "goose",
+    "qwen": "qwen-code",
+    "qwen-code": "qwen-code",
+}
+
+# What a creature of one can be called: every canonical name, and the only
+# thing `type_of` accepts as an agent without a class to go on.
+AGENT_KEYS = frozenset(AGENT_TOOLS.values())
+
+# Whole words only. A file called claude_notes.md must not turn the terminal
+# editing it into an agent, so the title is cut into words first and the
+# words are compared, rather than looking for the name anywhere in the line.
+_TITLE_WORDS = re.compile(r"[^a-z0-9+_.-]+")
+
+
+def agent_tool(window):
+    """Which coding agent this window is running, or "" for none.
+
+    Two answers, in order. The first is `agent`, which whoever read the
+    window stamped on it after looking at what the terminal is actually
+    running (`creatures.agent_in_window`) - the reliable one, and the only
+    one that finds Claude Code, whose title is the name of your work rather
+    than its own. The second is the title, for the tools that do put their
+    name in it and for a session this machine cannot see into, an agent over
+    ssh being the obvious one.
+
+    Only terminals are asked. Everything else is whatever its class says it
+    is, which is the rule for every other type and stays the rule here.
+    """
+    window = window or {}
+    if type_of(window.get("initialClass") or window.get("class")) != "SHELL":
+        return ""
+    stamped = str(window.get("agent") or "").strip().lower()
+    if stamped:
+        return AGENT_TOOLS.get(stamped) or (stamped if stamped
+                                            in AGENT_TOOLS.values() else "")
+    for field in ("title", "initialTitle"):
+        text = str(window.get(field) or "").lower()
+        for word in _TITLE_WORDS.split(text):
+            tool = AGENT_TOOLS.get(word)
+            if tool:
+                return tool
+    return ""
 
 
 def effectiveness(attack_type, defend_type):
@@ -97,6 +195,11 @@ MOVES = {
         {"name": "PIPE BURST", "power": 55, "accuracy": 1.00},
         {"name": "SUDO SLAM", "power": 70, "accuracy": 0.90},
         {"name": "FORK BOMB", "power": 85, "accuracy": 0.70},
+    ),
+    "AGENT": (
+        {"name": "TOOL CALL", "power": 50, "accuracy": 1.00},
+        {"name": "RATE LIMIT", "power": 70, "accuracy": 0.90},
+        {"name": "HALLUCINATE", "power": 85, "accuracy": 0.65},
     ),
     "CODE": (
         {"name": "STACK TRACE", "power": 45, "accuracy": 1.00},
@@ -144,7 +247,8 @@ def _seed_of(address):
 
 
 def species_key(window):
-    """The name a creature is remembered under: its launch class, folded.
+    """The name a creature is remembered under: its launch class, folded -
+    or, for a terminal with an agent in it, the agent (see `agent_tool`).
 
     Also what its stats are hung off. It used to be the window's address, and
     that was wrong in a way that only showed up once records outlived their
@@ -153,6 +257,9 @@ def species_key(window):
     order it learns moves in. A class does not change, so now none of them do.
     """
     window = window or {}
+    tool = agent_tool(window)
+    if tool:
+        return tool
     for field in ("initialClass", "class"):
         value = str(window.get(field) or "").strip().lower()
         if value:
@@ -174,8 +281,12 @@ def display_name(window):
 
     The initial class is preferred over the live one because a window that
     renames itself (a browser adopting a site's name, say) should still meet
-    you as the same creature.
+    you as the same creature. An agent is the exception in both directions:
+    it is named after what it is running, because that is what it is.
     """
+    tool = agent_tool(window)
+    if tool:
+        return tool.upper()[:12]
     for key in ("initialClass", "class", "initialTitle", "title"):
         value = str(window.get(key) or "").strip()
         if value:
@@ -233,6 +344,7 @@ STAGE_LEVELS = (0, 12, 25)
 # type is good at. Nothing here is borrowed from anybody's monsters.
 STAGE_TITLES = {
     "SHELL": ("", "SUPER", "ROOT"),
+    "AGENT": ("", "AUTO", "ORACLE"),
     "CODE": ("", "SMART", "PRIME"),
     "NET": ("", "FAST", "HYPER"),
     "CHAT": ("", "LOUD", "OMNI"),
@@ -373,7 +485,9 @@ def creature(window, record=None):
     # Hung off what the creature *is*, not off the window it happens to be in
     # today: see species_key.
     seed = key_seed(species_key(window))
-    kind = type_of(window.get("initialClass") or window.get("class"))
+    # Through the key, so an agent window fights as what it is running and
+    # as what it is remembered under - one answer, not two.
+    kind = type_of(species_key(window))
     level, into, needed = progress(record.get("xp", 0))
     stage = stage_for_level(level)
     bonus = size_bonus(window)
@@ -438,8 +552,13 @@ def moves_for(kind, seed, stage=1):
     for step in range(borrowed):
         borrowed_type = others[(seed >> (5 * (step + 1))) % len(others)]
         pool = MOVES[borrowed_type]
-        picked.append(dict(pool[(seed >> (3 * (step + 1))) % len(pool)],
-                           type=borrowed_type))
+        index = (seed >> (3 * (step + 1))) % len(pool)
+        # Two borrowings can land on the same move, and a menu with the same
+        # move in it twice is a menu with three moves. Walk on until it is
+        # something new; there are always more moves than there are slots.
+        while any(move["name"] == pool[index]["name"] for move in picked):
+            index = (index + 1) % len(pool)
+        picked.append(dict(pool[index], type=borrowed_type))
     return picked
 
 

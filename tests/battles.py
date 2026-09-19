@@ -88,6 +88,53 @@ class Types(unittest.TestCase):
         self.assertEqual(battles.type_of(""), "GLASS")
         self.assertEqual(battles.type_of(None), "GLASS")
 
+    def test_an_agent_app_is_an_agent_by_its_class(self):
+        # The desktop ones announce themselves, and several of their names
+        # hold another type's needle - "codex" holds "code", "chatgpt" holds
+        # "chat" - so this is also the order CLASS_TYPES is read in.
+        self.assertEqual(battles.type_of("Claude"), "AGENT")
+        self.assertEqual(battles.type_of("dev.anthropic.claude"), "AGENT")
+        self.assertEqual(battles.type_of("com.openai.codex"), "AGENT")
+        self.assertEqual(battles.type_of("ChatGPT"), "AGENT")
+        # And the editors that merely have an agent in them are still CODE.
+        self.assertEqual(battles.type_of("cursor"), "CODE")
+        self.assertEqual(battles.type_of("android-studio"), "CODE")
+
+    def test_a_terminal_running_an_agent_is_an_agent(self):
+        session = window(klass="foot")
+        session["title"] = "\u2733 claude - ~/src/thing"
+        self.assertEqual(battles.agent_tool(session), "claude")
+        self.assertEqual(battles.creature(session)["type"], "AGENT")
+        # It is named after what it is running, not after the terminal.
+        self.assertEqual(battles.display_name(session), "CLAUDE")
+
+    def test_a_terminal_with_no_agent_in_it_is_a_terminal(self):
+        # Whole words only: a file named after an agent is a file, and the
+        # terminal editing it is still a terminal.
+        for title in ("zsh", "vim claude_notes.md", "nvim claude.md",
+                      "make codex-report"):
+            session = window(klass="foot")
+            session["title"] = title
+            self.assertEqual(battles.agent_tool(session), "", title)
+            self.assertEqual(battles.creature(session)["type"], "SHELL", title)
+
+    def test_only_a_terminal_is_read_for_an_agent(self):
+        # A browser showing claude.ai is a browser. Titles are read for
+        # terminals and nothing else, or every window would be an agent the
+        # moment it mentioned one.
+        page = window(klass="firefox")
+        page["title"] = "Claude"
+        self.assertEqual(battles.agent_tool(page), "")
+        self.assertEqual(battles.creature(page)["type"], "NET")
+
+    def test_every_agent_a_title_can_name_is_an_agent_type(self):
+        # The tool's name becomes the creature's key (species_key), and the
+        # key is what the type is read back off - including for a sleeping
+        # creature, which has nothing else left. If the two disagreed, an
+        # agent would change type the moment its window shut.
+        for tool in sorted(set(battles.AGENT_TOOLS.values())):
+            self.assertEqual(battles.type_of(tool), "AGENT", tool)
+
     def test_the_ring_beats_the_next_and_bounces_off_the_previous(self):
         for index, kind in enumerate(battles.TYPES):
             following = battles.TYPES[(index + 1) % len(battles.TYPES)]
@@ -2004,6 +2051,18 @@ class Progression(unittest.TestCase):
                 self.assertEqual(len(moves_list), 4)
                 self.assertGreaterEqual(len(own), 2)
 
+    def test_no_creature_carries_the_same_move_twice(self):
+        # Two borrowings can land on the same move, and a menu with the same
+        # move in it twice is a menu with three moves.
+        for kind in battles.TYPES:
+            for stage in (1, 2, 3):
+                for seed in (0, 7, 0xabc123, battles.key_seed("claude"),
+                             battles.key_seed("foot")):
+                    names = [move["name"]
+                             for move in battles.moves_for(kind, seed, stage)]
+                    self.assertEqual(len(set(names)), len(names),
+                                     "%s %s %s" % (kind, stage, seed))
+
     def test_a_record_makes_the_same_window_a_stronger_creature(self):
         fresh = battles.creature(window("0xdeadbeef"))
         fed = battles.creature(window("0xdeadbeef"), {"xp": 4000})
@@ -2286,6 +2345,122 @@ def fake_proc(pid=4242, age_seconds=7200.0):
     return directory
 
 
+def fake_child(proc, pid, comm, parent=None, cmdline=None):
+    """Add one process to a fake /proc, optionally under another one.
+
+    Enough of it for `agent_of`: what it calls itself, what it was told to
+    run, and the children file the walk follows.
+    """
+    directory = os.path.join(proc, str(pid))
+    os.makedirs(os.path.join(directory, "task", str(pid)), exist_ok=True)
+    with open(os.path.join(directory, "comm"), "w") as handle:
+        handle.write(comm + "\n")
+    with open(os.path.join(directory, "cmdline"), "w") as handle:
+        handle.write("\0".join(cmdline or [comm]) + "\0")
+    with open(os.path.join(directory, "task", str(pid), "children"), "w") as h:
+        h.write("")
+    if parent is not None:
+        path = os.path.join(proc, str(parent), "task", str(parent), "children")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        existing = ""
+        if os.path.exists(path):
+            with open(path) as handle:
+                existing = handle.read()
+        with open(path, "w") as handle:
+            handle.write((existing + " " + str(pid)).strip() + " ")
+    return pid
+
+
+class TheAgentInTheTerminal(unittest.TestCase):
+    """Claude Code, Codex and the rest are not windows - they run inside a
+    terminal that goes on calling itself foot, and whose title is the name of
+    your work rather than theirs. So the process tree is what is read."""
+
+    TERMINAL = 4242
+
+    def setUp(self):
+        self.proc = fake_proc(pid=self.TERMINAL, age_seconds=3600.0)
+        fake_child(self.proc, self.TERMINAL, "foot")
+        self.shell = fake_child(self.proc, 4243, "bash", parent=self.TERMINAL)
+        self.directory = tempfile.mkdtemp()
+        self.book = creatures.Store(
+            os.path.join(self.directory, "creatures.json"), proc=self.proc)
+
+    def tearDown(self):
+        shutil.rmtree(self.proc, ignore_errors=True)
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def terminal(self, title="~/src"):
+        # The title Claude Code actually sets is a summary of the work, which
+        # is why it is no use here: "Sleeping windows persistence" names
+        # nothing this plugin could match.
+        entry = window("0x1", "foot", pid=self.TERMINAL)
+        entry["title"] = title
+        return entry
+
+    def test_an_agent_two_steps_down_still_names_the_creature(self):
+        fake_child(self.proc, 4244, "claude", parent=self.shell)
+        session = self.terminal()
+        self.assertEqual(creatures.species_key(session, self.proc), "claude")
+        self.assertEqual(battles.creature(session)["type"], "AGENT")
+        self.assertEqual(battles.creature(session)["name"], "CLAUDE")
+
+    def test_an_agent_behind_its_interpreter_is_still_found(self):
+        # A tool installed as a script says its own name in comm; one started
+        # through node or python hides behind it, so the command counts too.
+        fake_child(self.proc, 4244, "node", parent=self.shell,
+                   cmdline=["node", "/usr/lib/node_modules/codex/cli.js",
+                            "--yolo"])
+        self.assertEqual(creatures.agent_of(self.TERMINAL, self.proc), "codex")
+
+    def test_a_terminal_doing_its_own_work_is_a_terminal(self):
+        fake_child(self.proc, 4244, "vim", parent=self.shell,
+                   cmdline=["vim", "claude_notes.md"])
+        session = self.terminal(title="vim claude_notes.md")
+        self.assertEqual(creatures.species_key(session, self.proc), "foot")
+        self.assertEqual(battles.creature(session)["type"], "SHELL")
+
+    def test_a_window_with_nothing_to_read_asks_nothing(self):
+        # No pid is a sleeping creature or a fixture, and a browser is a
+        # browser however many agents it has open in tabs.
+        self.assertEqual(creatures.agent_in_window({"class": "foot"},
+                                                   self.proc), "")
+        page = window("0x2", "brave-browser", pid=self.TERMINAL)
+        fake_child(self.proc, 4244, "claude", parent=self.shell)
+        self.assertEqual(creatures.agent_in_window(page, self.proc), "")
+
+    def test_the_sleeping_list_remembers_the_agent_not_the_terminal(self):
+        # The complaint this was written for: a terminal running claude was
+        # written down as "foot", so the agent never reached the record book
+        # and had nothing to go to sleep as.
+        fake_child(self.proc, 4244, "claude", parent=self.shell)
+        self.book.touch([self.terminal()])
+        self.assertIn("claude", self.book.species)
+        rows = creatures.sleeping([], self.book)
+        self.assertEqual([row["name"] for row in rows], ["CLAUDE"])
+        self.assertEqual(rows[0]["type"], "AGENT")
+
+    def test_the_panel_has_a_face_for_every_agent(self):
+        # The panel draws Omarchy's own icons, and the map it draws them
+        # from is written out by hand. A tool this module knows and the
+        # panel does not would sit there with nothing to show.
+        panel = os.path.join(ROOT, "Roster.qml")
+        with open(panel, encoding="utf-8") as handle:
+            markup = handle.read()
+        glyphs = markup.split("agentGlyphs: ({", 1)[1].split("})", 1)[0]
+        for tool in sorted(battles.AGENT_KEYS):
+            self.assertIn('"%s":' % tool, glyphs, tool)
+
+    def test_an_agent_keeps_what_it_earns_apart_from_its_terminal(self):
+        fake_child(self.proc, 4244, "claude", parent=self.shell)
+        self.book.award(self.terminal(), xp=200, win=1)
+        # A plain terminal of the same class is a different creature, and
+        # has not earned any of that.
+        plain = window("0x9", "foot")
+        self.assertEqual(self.book.record(plain)["xp"], 0)
+        self.assertEqual(self.book.record(self.terminal())["xp"], 200)
+
+
 class TheRecordBook(unittest.TestCase):
     """What a creature remembers, and what it is remembered under."""
 
@@ -2303,6 +2478,20 @@ class TheRecordBook(unittest.TestCase):
                          creatures.species_key(window("0xfeed", "firefox")))
         self.assertNotEqual(creatures.species_key(window("0x1", "firefox")),
                             creatures.species_key(window("0x1", "foot")))
+
+    def test_two_terminals_running_the_same_agent_are_one_creature(self):
+        # The same reading of identity every other creature gets: a class is
+        # a creature, and an agent is what this window is a window of.
+        first = window("0x1", "foot")
+        first["title"] = "claude"
+        second = window("0x2", "kitty")
+        second["title"] = "~/other (claude)"
+        self.assertEqual(creatures.species_key(first), "claude")
+        self.assertEqual(creatures.species_key(first),
+                         creatures.species_key(second))
+        # And the terminal is a terminal again once the agent has exited.
+        first["title"] = "zsh"
+        self.assertEqual(creatures.species_key(first), "foot")
 
     def test_the_launch_class_wins_over_a_window_that_renames_itself(self):
         renamed = {"initialClass": "firefox", "class": "some site",
@@ -2453,6 +2642,137 @@ class FeedingFromThePanel(unittest.TestCase):
         for forbidden in ("subprocess", "dispatch", "hyprctl", "socket",
                           "os.kill", "unlink", "rmtree"):
             self.assertNotIn(forbidden, source, forbidden)
+
+
+class TheCensus(unittest.TestCase):
+    """Every window the machine runs earns a record, panel or no panel.
+
+    A record used to appear only when something fought, ate or was looked at
+    through the roster, which meant the sleeping list was a list of what
+    somebody had happened to be watching. It is meant to be a list of
+    everything, so the daemon writes one down when a window opens and for
+    everything already open when it starts.
+    """
+
+    class FakeHypr:
+        def __init__(self, clients=(), fail=False):
+            self.clients = list(clients)
+            self.fail = fail
+            self.queries = []
+
+        def query(self, what):
+            self.queries.append(what)
+            if self.fail:
+                raise OSError("no compositor")
+            return self.clients if what == "clients" else {}
+
+    class FakeStream:
+        def __init__(self, chunks):
+            self.chunks = list(chunks)
+
+        def recv(self, size):
+            return self.chunks.pop(0) if self.chunks else b""
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.book = creatures.Store(
+            os.path.join(self.directory, "creatures.json"))
+        self.daemon = bd.Daemon.__new__(bd.Daemon)
+        self.daemon.creatures = self.book
+        self.daemon.hypr = self.FakeHypr([window("0x1", "foot"),
+                                          window("0x2", "mpv")])
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def keys(self):
+        """What is on disk, not what is in hand: a record nobody wrote down
+        is a record that does not survive the restart this is all for."""
+        try:
+            with open(self.book.path) as handle:
+                return set(json.load(handle)["species"])
+        except OSError:
+            return set()
+
+    def test_everything_open_at_startup_is_written_down(self):
+        self.daemon.census()
+        self.assertEqual(self.keys(), {"foot", "mpv"})
+
+    def test_a_window_opening_is_written_down_from_the_event(self):
+        self.daemon.note_open("0x3,1,Alacritty,a terminal")
+        self.assertEqual(self.keys(), {"alacritty"})
+        self.assertEqual(self.daemon.hypr.queries, [],
+                         "the class rides in the event")
+
+    def test_it_is_still_there_once_the_window_is_gone(self):
+        # The whole point: what was open once is on the sleeping list for
+        # good, and a fresh Store reads it back.
+        self.daemon.note_open("0x3,1,Alacritty,a terminal")
+        reopened = creatures.Store(self.book.path)
+        rows = creatures.sleeping([window("0x1", "foot")], reopened)
+        self.assertIn("alacritty", [row["key"] for row in rows])
+
+    def test_the_event_stream_writes_one_down(self):
+        self.daemon.event_buffer = b""
+        self.daemon.event_stream = self.FakeStream(
+            [b"openwindow>>0x4,2,Discord,chat\n"])
+        self.daemon.read_events()
+        self.assertEqual(self.keys(), {"discord"})
+
+    def test_a_payload_that_makes_no_sense_is_ignored(self):
+        for payload in ("", "0x3", "0x3,1", "0x3,1, ,title"):
+            self.daemon.note_open(payload)
+        self.assertEqual(self.keys(), set())
+
+    def test_a_compositor_that_cannot_be_read_is_not_fatal(self):
+        self.daemon.hypr = self.FakeHypr(fail=True)
+        self.daemon.census()
+        self.assertEqual(self.book.species, {})
+
+
+class NotACreature(unittest.TestCase):
+    """This plugin's own windows are exempt. It is the game, not a player in
+    it: a creature made out of the overlay would fight, eat and sleep as a
+    window nobody opened."""
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.path = os.path.join(self.directory, "creatures.json")
+        self.book = creatures.Store(self.path)
+        self.mine = window("0x9", "hyprbattles-probe")
+        self.theirs = window("0x1", "foot")
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def test_the_names_it_answers_to(self):
+        for name in ("hyprbattles", "hyprbattles-probe", "HyprBattles",
+                     "dev.cstav.omarchy.plugin.hyprbattles"):
+            self.assertTrue(creatures.ours(name), name)
+        for name in ("foot", "", "brave-browser", None):
+            self.assertFalse(creatures.ours(name), name)
+
+    def test_it_never_earns_a_record(self):
+        self.book.touch([self.mine, self.theirs])
+        self.assertEqual(set(self.book.species), {"foot"})
+
+    def test_it_is_not_on_the_roster(self):
+        rows = creatures.roster([self.mine, self.theirs], self.book)
+        self.assertEqual([row["key"] for row in rows], ["foot"])
+
+    def test_it_never_sleeps(self):
+        # Even one an older version wrote down: the list is what it is now,
+        # not what somebody used to believe.
+        self.book.species["hyprbattles-probe"] = {"xp": 0, "wins": 0,
+                                                  "losses": 0, "meals": 0,
+                                                  "seen": 1.0}
+        self.assertEqual(creatures.sleeping([self.theirs], self.book), [])
+
+    def test_an_old_record_of_ours_is_swept_out_of_the_book(self):
+        self.book.species["hyprbattles-probe"] = {"xp": 9, "seen": 1.0}
+        self.book.award(self.theirs, xp=1)
+        with open(self.path) as handle:
+            self.assertEqual(set(json.load(handle)["species"]), {"foot"})
 
 
 class SleepingWindows(unittest.TestCase):

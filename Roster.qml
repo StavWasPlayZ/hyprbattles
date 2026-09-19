@@ -43,14 +43,88 @@ Panel {
     readonly property color dim: Qt.darker(foreground, 1.55)
     readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
-    // The same seven accents the battle screen uses. A type has to mean the
+    // The same eight accents the battle screen uses. A type has to mean the
     // same colour in the panel as it does in the arena, so these are copied
     // deliberately rather than taken from the theme - see Battle.qml.
     readonly property var typeColors: ({
-        "SHELL": "#5fb37a", "CODE": "#5f97d8", "NET": "#9a86e0",
-        "CHAT": "#d8a04a", "MEDIA": "#d86e9a", "GAME": "#dc6a6a",
-        "GLASS": "#6fb8bb"
+        "SHELL": "#5fb37a", "AGENT": "#9cbf52", "CODE": "#5f97d8",
+        "NET": "#9a86e0", "CHAT": "#d8a04a", "MEDIA": "#d86e9a",
+        "GAME": "#dc6a6a", "GLASS": "#6fb8bb"
     })
+
+
+    // The agents wear Omarchy's own faces. Two of them ship a coloured mark
+    // with the shell's agents panel; the rest have a glyph in the menu row
+    // that asks you to pick a default agent, some from the icon font and
+    // some from Omarchy's own. An icon that disagrees with the desktop is a
+    // second icon to learn, so none of these are drawn here - they are the
+    // ones already on screen elsewhere, looked up by the same name.
+    readonly property string agentAssets:
+        "/usr/share/omarchy/shell/plugins/agents/assets/"
+    readonly property var agentGlyphs: ({
+        "aider": "󰚩", "claude": "󰛄", "codex": "", "copilot": "",
+        "crush": "󰋑", "cursor-agent": "", "gemini": "󰫢",
+        "goose": "󰚩", "grok": "", "hermes": "", "muse": "󰛤",
+        "omp": "", "openclaw": "", "opencode": "", "pi": "",
+        "qwen-code": "󰚩"
+    })
+    // Which of those glyphs are Omarchy's own font rather than the bar's.
+    readonly property var agentGlyphFonts: ({
+        "codex": "omarchy", "cursor-agent": "omarchy",
+        "grok": "omarchy", "hermes": "omarchy", "omp": "omarchy",
+        "openclaw": "omarchy", "opencode": "omarchy",
+        "pi": "omarchy"
+    })
+    // What an agent nobody has drawn yet looks like: the menu's own word for
+    // the whole row.
+    readonly property string agentGlyph: "󰚩"
+
+    // Ported from the shell's agents panel, which uses it for the same
+    // choice: a mark drawn in white ships a `-light` twin for light
+    // surfaces, and one that works on both (Claude's orange) ships one file.
+    function channelLuminance(value) {
+        var channel = Number(value)
+        if (!isFinite(channel)) return 0
+        return channel <= 0.03928 ? channel / 12.92
+                                  : Math.pow((channel + 0.055) / 1.055, 2.4)
+    }
+
+    function isLightSurface(colour) {
+        return 0.2126 * channelLuminance(colour.r)
+             + 0.7152 * channelLuminance(colour.g)
+             + 0.0722 * channelLuminance(colour.b) >= 0.5
+    }
+
+    // Every picture worth trying for one creature, best first. An agent is
+    // asked for its Omarchy mark before anything else, then falls through to
+    // the ordinary desktop lookup - which is what finds the agent apps that
+    // do have a window class of their own.
+    function markSources(row) {
+        var sources = []
+        var key = String((row && row.key) || "")
+        if (row && String(row.type) === "AGENT" && key !== "") {
+            if (isLightSurface(Color.background))
+                sources.push("file://" + agentAssets + key + "-light.svg")
+            sources.push("file://" + agentAssets + key + ".svg")
+        }
+        var icon = appIcon(key)
+        if (icon !== "") sources.push(icon)
+        return sources
+    }
+
+    // The letter to fall back on when no picture loaded. Only agents have
+    // one: every other window either has a desktop icon or shows its type
+    // chip and nothing else, the way it always did.
+    function markGlyph(row) {
+        if (!row || String(row.type) !== "AGENT") return ""
+        var glyph = agentGlyphs[String(row.key || "")]
+        return glyph !== undefined ? glyph : agentGlyph
+    }
+
+    function markGlyphFont(row) {
+        var font = row ? agentGlyphFonts[String(row.key || "")] : undefined
+        return font !== undefined ? font : fontFamily
+    }
 
     // The page's own margin. The panel keeps none of its own (`padding: 0`)
     // so that scrolled content runs to the edge; this is what puts the air
@@ -594,18 +668,54 @@ Panel {
                         }
                     }
 
-                    Image {
+                    // The creature's face: an agent wears the mark
+                    // Omarchy already gives it, everything else its own
+                    // desktop icon. Each candidate is tried in turn and
+                    // the glyph is what is left when none of them loaded.
+                    Item {
+                        id: mark
                         anchors.verticalCenter: parent.verticalCenter
-                        width: Style.font.heading
-                        height: width
-                        visible: source !== ""
-                        fillMode: Image.PreserveAspectFit
-                        // Decode at physical pixels, or a
-                        // PNG icon is upscaled and blurry
-                        // on a HiDPI screen.
-                        sourceSize.width: Math.round(width * Screen.devicePixelRatio)
-                        sourceSize.height: Math.round(width * Screen.devicePixelRatio)
-                        source: root.appIcon(creature.row.key)
+                        // Both from the row and never from the picture:
+                        // sizing a slot by whether its image loaded, while
+                        // the image is sized by the slot, is a binding loop
+                        // the shell says so out loud.
+                        width: visible ? Style.font.heading : 0
+                        height: Style.font.heading
+                        visible: sources.length > 0 || markLetter.text !== ""
+
+                        readonly property var sources:
+                            root.markSources(creature.row)
+                        property int attempt: 0
+                        // A card is reused as the list scrolls, so the
+                        // walk starts again whenever the row changes.
+                        onSourcesChanged: attempt = 0
+
+                        Image {
+                            id: markImage
+                            anchors.fill: parent
+                            visible: status === Image.Ready
+                            fillMode: Image.PreserveAspectFit
+                            // Decode at physical pixels, or a
+                            // PNG icon is upscaled and blurry
+                            // on a HiDPI screen.
+                            sourceSize.width: Math.round(width * Screen.devicePixelRatio)
+                            sourceSize.height: Math.round(width * Screen.devicePixelRatio)
+                            source: mark.attempt < mark.sources.length
+                                    ? mark.sources[mark.attempt] : ""
+                            onStatusChanged: if (status === Image.Error
+                                                 && mark.attempt < mark.sources.length)
+                                                 mark.attempt++
+                        }
+
+                        Text {
+                            id: markLetter
+                            anchors.centerIn: parent
+                            visible: !markImage.visible && text !== ""
+                            text: root.markGlyph(creature.row)
+                            color: creature.tint
+                            font.family: root.markGlyphFont(creature.row)
+                            font.pixelSize: Style.font.heading
+                        }
                     }
 
                     Text {
@@ -1159,7 +1269,7 @@ Panel {
                     }
 
                     // What it fights with, and the colour each move belongs
-                    // to - the same seven the arena uses, so a move borrowed
+                    // to - the same eight the arena uses, so a move borrowed
                     // from another type is visible as one at a glance.
                     Grid {
                         visible: root.view === "window"
