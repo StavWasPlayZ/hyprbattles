@@ -137,7 +137,8 @@ panel with a feed button is not a level button. Both are in
 twice, and the pantry is only the first gate:
 
 - the machine has to have the food spare - this document, and the ledger;
-- the window has to have room for it - its age.
+- the creature has to have room for it - the age of its eldest open window,
+  shared by every window of its class.
 
 A meal outside a battle heals nothing. There is nothing to heal: HP only
 exists while a fight is on. It buys experience, and enough of that evolves the

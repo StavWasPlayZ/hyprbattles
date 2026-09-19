@@ -23,6 +23,14 @@ It is also deliberately the *launch* class rather than the live one, so a
 browser that renames itself after the site it is showing is still the same
 creature at teatime as it was at breakfast.
 
+That cuts the other way too, and the panel says so: **two Brave windows are
+one creature with two windows open**, not two Braves. They share a level, a
+record, a set of moves and - the part that would otherwise be a hole - one
+appetite. The roster lists them once, with a `x2` beside the name, and
+feeding either of them feeds the creature. Listing them twice was the same
+creature written out twice, and two stomachs where there has only ever been
+one record for them to fill.
+
 One exception, and it is the same rule read honestly: a terminal running a
 coding agent is remembered as the **agent** - `claude`, `codex`, `aider` and
 the rest, found by walking the process tree under the window (see
@@ -218,6 +226,16 @@ Uptime comes off `/proc/<pid>/stat`, not out of anything this plugin wrote
 down. That matters: restarting the daemon, deleting the ledger or editing the
 records by hand cannot make a window older than it is.
 
+When a creature has several windows open, the appetite is **the eldest
+window's**, and what every one of them has eaten counts against it. Appetite
+is bought with uptime, and that is the window that bought it; a window opened
+a moment ago brings a creature nothing, because the experience a meal pays
+for goes to the class either way. Otherwise the way to level anything would
+be to open six of it. The meal itself is still written down against one
+window - an appetite entry is keyed by pid and start time, and has to be, so
+that closing a window forgets it - and it goes against whichever of them has
+the most room of its own.
+
 So there are two independent gates on feeding, and they fail differently:
 
 - **The machine has to have the food spare** - the pantry and its ledger, see
@@ -241,10 +259,11 @@ for.
 Behind the icon are three views, because each is a panel's worth on its own:
 
 **The windows.** The switch first - it is what somebody opening the panel in a
-hurry came for - then a card per open window, hungriest first. Each card
-carries the application's own icon, the type as its colour, the name, a star
-per evolution, the level, the record, how long the window has been up, how far
-it is from the next level, and a bar for how much appetite it has left. The
+hurry came for - then a card per creature, hungriest first. Each card carries
+the application's own icon, the type as its colour, the name, a `x2` when it
+has more than one window open, a star per evolution, the level, the record,
+how long its eldest window has been up, how far it is from the next level,
+and a bar for how much appetite it has left. The
 icon is looked up the way the rest of the shell looks one up - the desktop
 entry for the class, then the class as an icon name - and a window that has
 none simply shows its type chip, as it did before.
@@ -319,15 +338,20 @@ battles-ctl roster --json           # the same, as the panel reads it
 battles-ctl feed <address> staple   # one portion of FREE RAM
 ```
 
-`roster` prints one line per window: name, type, level, stage, hunger out of
-appetite, the win-loss record, and the address to feed it with.
+`roster` prints one line per creature: name - with a `x2` when more than one
+of its windows is open - type, level, stage, hunger out of appetite, the
+win-loss record, and the address to feed it with. That address is its eldest
+window's, and any of its windows' addresses will do on the way back in.
 
 ## What the tests hold still
 
 - A record is keyed by class, and survives the window closing.
-- An appetite belongs to one running window, is keyed by pid *and* process
-  start time so a recycled pid cannot inherit it, and is forgotten when the
-  window is gone.
+- An appetite entry belongs to one running window, is keyed by pid *and*
+  process start time so a recycled pid cannot inherit it, and is forgotten
+  when the window is gone.
+- A class with several windows open is one row, with one appetite - the
+  eldest window's - that all of them eat against. A second window is not a
+  second helping.
 - A refusal - full creature, bare shelf, unknown window, a move it has not
   learned - costs nothing: no portion leaves the pantry, no appetite is spent
   and the carried moves do not move.

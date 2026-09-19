@@ -897,7 +897,10 @@ class Daemon:
         if not window:
             return {"ok": False, "message": "That window is gone."}
 
-        result = creatures.feed(window, shelf_key, self.creatures, self.pantry)
+        # The window list goes in too: a creature is every window of its
+        # class, and they share one appetite between them.
+        result = creatures.feed(window, shelf_key, self.creatures, self.pantry,
+                                clients=clients)
         if not result.get("ok"):
             return result
         self.effects.play("battle-heal.wav")

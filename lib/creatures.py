@@ -543,26 +543,111 @@ def _one_meal_away(needed, room, shelves):
     return False
 
 
+def _age(window, proc="/proc"):
+    """How long this window's process has been up, and nothing at all when
+    there is no process to ask about."""
+    pid = (window or {}).get("pid")
+    return window_uptime(pid, proc) if pid else 0.0
+
+
+def instances(window, clients, proc="/proc"):
+    """Every open window of this creature's class, eldest first.
+
+    A creature is its class, so two Brave windows are two bodies of one
+    creature and not two creatures. The eldest speaks for it: it is the one
+    that has bought the appetite, and its address is the one the panel and
+    `battles-ctl` are handed back.
+    """
+    key = species_key(window or {}, proc)
+    same = [one for one in clients or []
+            if isinstance(one, dict) and species_key(one, proc) == key]
+    if not same:
+        same = [window or {}]
+    return sorted(same, key=lambda one: (-_age(one, proc),
+                                         str(one.get("address") or "")))
+
+
+def stomach(windows, store, proc="/proc"):
+    """One class's appetite, and what its windows have eaten against it.
+
+    The appetite is the eldest window's, because an appetite is bought with
+    uptime and that is the window that bought it; what every instance has
+    eaten counts against that one number. One stomach per creature, or a
+    second window of something would double what it can be fed - and a meal
+    is experience, which belongs to the class and not to the window.
+    """
+    oldest = 0.0
+    eaten = 0
+    for one in windows or []:
+        pid = (one or {}).get("pid")
+        if not pid:
+            continue
+        oldest = max(oldest, window_uptime(pid, proc))
+        eaten += store.eaten(pid)
+    return {"uptime": oldest, "appetite": rules.appetite(oldest),
+            "eaten": eaten, "hunger": rules.hunger(oldest, eaten)}
+
+
+def _mouth(windows, store, proc="/proc"):
+    """Which window a meal is written down against.
+
+    The one with the most room of its own, so the entry lands where it is
+    least likely to be swept away first, and the eldest when none of them has
+    any room left. What may be eaten at all is the class's appetite either
+    way; this only decides where the note goes.
+    """
+    best = None
+    for one in windows or []:
+        pid = (one or {}).get("pid")
+        if not pid or not instance_key(pid, proc):
+            continue
+        uptime = window_uptime(pid, proc)
+        rank = (rules.hunger(uptime, store.eaten(pid)), uptime)
+        if best is None or rank > best[0]:
+            best = (rank, one)
+    return best[1] if best else None
+
+
 def roster(clients, store, larder=None, now=None, proc="/proc"):
     """Every open window as a creature, with what it has earned and how
-    hungry it is. Reads; changes nothing."""
+    hungry it is. Reads; changes nothing.
+
+    One row per class, however many of its windows are open: everything on a
+    row but the address belongs to the class, so two Braves listed twice was
+    the same creature written out twice - and two stomachs it never had.
+    """
     rows = []
     try:
         shelves = list(larder.stock()) if larder is not None else []
     except Exception:
         shelves = []
+    groups = {}
     for window in clients or []:
-        if not isinstance(window, dict) or ours(species_key(window, proc)):
+        if not isinstance(window, dict):
             continue
+        key = species_key(window, proc)
+        if ours(key):
+            continue
+        groups.setdefault(key, []).append(window)
+    for key, windows in groups.items():
+        windows = instances(windows[0], windows, proc)
+        window = windows[0]              # the eldest speaks for the class
         record = store.record(window)
         creature = rules.creature(window, record)
-        pid = window.get("pid")
-        uptime = window_uptime(pid, proc) if pid else 0.0
-        eaten = store.eaten(pid) if pid else 0
-        room = rules.hunger(uptime, eaten)
+        room = stomach(windows, store, proc)
         needed = rules.xp_to_next_stage(creature["xp"])
+        # One entry per open window, so a panel can say how many there are
+        # and name them, without any of them being a creature of its own.
+        bodies = [{
+            "address": str(one.get("address") or ""),
+            "title": str(one.get("title") or ""),
+            "uptime": int(_age(one, proc)),
+            "eaten": store.eaten(one["pid"]) if one.get("pid") else 0,
+            "canFeed": bool(one.get("pid"))
+                       and bool(instance_key(one["pid"], proc)),
+        } for one in windows]
         rows.append({
-            "address": str(window.get("address") or ""),
+            "address": bodies[0]["address"],
             "key": record["key"],
             "name": creature["name"],
             "title": str(window.get("title") or ""),
@@ -588,11 +673,18 @@ def roster(clients, store, larder=None, now=None, proc="/proc"):
             # what is coming as well as what is here.
             "learnset": rules.learnset(creature["type"], _seed(window),
                                        creature["level"], creature["stage"]),
-            "uptime": int(uptime),
-            "appetite": rules.appetite(uptime),
-            "eaten": eaten,
-            "hunger": room,
-            "canFeed": bool(pid) and bool(instance_key(pid, proc)),
+            # How many windows it has open, and who they are. The numbers
+            # above and below this line are the class's; these are the only
+            # things on the row that belong to one window.
+            "count": len(bodies),
+            "instances": bodies,
+            # The eldest window's uptime, because that is the appetite the
+            # creature has, and every instance's meals against it.
+            "uptime": int(room["uptime"]),
+            "appetite": room["appetite"],
+            "eaten": room["eaten"],
+            "hunger": room["hunger"],
+            "canFeed": any(body["canFeed"] for body in bodies),
             "sleeping": False,
             "seen": record["seen"],
             # How far off evolving it is, and whether one meal on the shelves
@@ -600,7 +692,8 @@ def roster(clients, store, larder=None, now=None, proc="/proc"):
             # anything answers yes to the second one: that is the only moment
             # this plugin ever has something to ask of somebody.
             "xpToEvolve": needed,
-            "canEvolveNow": bool(needed) and _one_meal_away(needed, room,
+            "canEvolveNow": bool(needed) and _one_meal_away(needed,
+                                                            room["hunger"],
                                                             shelves),
         })
     # Hungriest first is the order somebody feeding wants; a stable tiebreak
@@ -656,6 +749,10 @@ def sleeping(clients, store, now=None):
                       for move in creature["moves"]],
             "learnset": rules.learnset(creature["type"], _seed(window),
                                        creature["level"], creature["stage"]),
+            # No windows, so no bodies to count: a sleeping creature is one
+            # creature the way a waking one is, and neither is a list.
+            "count": 0,
+            "instances": [],
             "uptime": 0,
             "appetite": 0,
             "eaten": 0,
@@ -685,13 +782,19 @@ def find(identifier, clients, store, proc="/proc"):
     return None
 
 
-def feed(window, shelf_key, store, larder, now=None, proc="/proc"):
-    """Feed one portion to one window, out of the pantry and into the record.
+def feed(window, shelf_key, store, larder, now=None, proc="/proc",
+         clients=None):
+    """Feed one portion to one creature, out of the pantry and into the record.
 
     Two gates, and they are independent on purpose: the machine has to have
-    the food spare (the pantry's ledger) and the window has to have room for
-    it (its appetite, bought with uptime). Either one refusing is a plain
+    the food spare (the pantry's ledger) and the creature has to have room
+    for it (its appetite, bought with uptime). Either one refusing is a plain
     sentence back, never an exception.
+
+    Given the window list, the creature is every open window of its class and
+    they share the one appetite; given none, it is the window handed in. The
+    meal is written down against one of those windows, because that is what
+    an appetite entry is keyed by, and the experience against the class.
 
     Returns a dict: `ok`, a `message` to show, and - when something was eaten
     - the `serving`, the new `record`, and `evolved` when the experience
@@ -699,23 +802,25 @@ def feed(window, shelf_key, store, larder, now=None, proc="/proc"):
     """
     now = time.time() if now is None else now
     window = window or {}
-    pid = window.get("pid")
-    key = instance_key(pid, proc) if pid else ""
-    if not key:
-        # A creature whose window is shut has no process to be hungry with.
+    windows = instances(window, clients, proc)
+    mouth = _mouth(windows, store, proc)
+    if mouth is None:
+        # A creature with no window open has no process to be hungry with.
         # Nothing is wrong; there is just nothing there to feed.
         name = rules.display_name(window)
         return {"ok": False,
                 "message": "%s is closed. Open it and it can eat." % name}
+    # From here on the eldest open window is the creature: the record, the
+    # name and the evolution are its class's, whichever window was pointed at.
+    window = windows[0]
+    pid = mouth.get("pid")
 
     shelves = {shelf["key"]: shelf for shelf in (larder.stock() or [])}
     shelf = shelves.get(str(shelf_key))
     if not shelf:
         return {"ok": False, "message": "There is no such food."}
 
-    uptime = window_uptime(pid, proc)
-    eaten = store.eaten(pid)
-    room = rules.hunger(uptime, eaten)
+    room = stomach(windows, store, proc)["hunger"]
     nourish = int(shelf.get("nourish", 0))
     if room < nourish:
         return {"ok": False,

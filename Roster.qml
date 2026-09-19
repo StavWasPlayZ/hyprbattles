@@ -2,9 +2,14 @@
 //
 // This is the desk side of the game. A battle is something that happens to
 // you; this is where you go when you want to make a window stronger on
-// purpose. One card per open window - what it fights as, what level it has
+// purpose. One card per creature - what it fights as, what level it has
 // reached, what it has won, how much more it can eat today - and a feed
 // button on each card that opens the pantry for that one creature.
+//
+// A creature is a class and not a window, so a class with three windows open
+// is one card wearing a x3, with one level, one record and one appetite
+// between them. Listing it three times was three copies of one creature -
+// and, worse, three appetites where the creature has only ever had one.
 //
 // Three views behind one icon, because each is a whole screen's worth on a
 // panel this narrow: the roster, the food picker for one creature, and the
@@ -239,8 +244,13 @@ Panel {
             { name: "MEALS", value: String(one.meals || 0) },
             { name: "APPETITE", value: one.sleeping ? "none while shut"
                 : Number(one.hunger || 0) + " of " + Number(one.appetite || 0) },
+            { name: "WINDOWS", value: one.sleeping
+                ? "none open" : String(Number(one.count || 1)) },
+            // The eldest window's, because that is the one whose age bought
+            // the appetite the whole creature eats against.
             { name: "OPEN FOR", value: one.sleeping ? "not open"
-                                                    : shortTime(one.uptime) },
+                : shortTime(one.uptime) + (Number(one.count || 1) > 1
+                                           ? " (eldest)" : "") },
             { name: "EXPERIENCE", value: Number(one.xpNeeded || 0) > 0
                 ? Number(one.xpInto || 0) + " / " + Number(one.xpNeeded)
                 : "at the cap" },
@@ -724,6 +734,19 @@ Panel {
                         color: root.foreground
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.body
+                        font.bold: true
+                    }
+
+                    // Two Braves are one creature with two windows open, not
+                    // two creatures: everything on this card but the count
+                    // is the same number for both of them.
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: Number(creature.row.count || 1) > 1
+                        text: "\u00d7" + Number(creature.row.count || 1)
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
                         font.bold: true
                     }
 

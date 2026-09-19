@@ -2329,20 +2329,27 @@ class Hunger(unittest.TestCase):
 def fake_proc(pid=4242, age_seconds=7200.0):
     """A /proc with one process in it, of whatever age the test wants."""
     directory = tempfile.mkdtemp()
-    boot = 100000.0
     with open(os.path.join(directory, "uptime"), "w") as handle:
-        handle.write("%f 0.0\n" % boot)
-    os.makedirs(os.path.join(directory, str(pid)))
-    ticks = os.sysconf("SC_CLK_TCK")
-    started = (boot - age_seconds) * ticks
+        handle.write("%f 0.0\n" % 100000.0)
+    fake_process(directory, pid, age_seconds)
+    return directory
+
+
+def fake_process(proc, pid, age_seconds=7200.0):
+    """One more process in a fake /proc, so a test can have two windows of
+    the same class with two different ages."""
+    with open(os.path.join(proc, "uptime")) as handle:
+        boot = float(handle.read().split()[0])
+    os.makedirs(os.path.join(proc, str(pid)), exist_ok=True)
+    started = (boot - age_seconds) * os.sysconf("SC_CLK_TCK")
     # Everything after the parenthesised comm, so field 22 of the whole line
     # - the start time - is the twentieth of these.
     fields = ["0"] * 50
     fields[0] = "S"
     fields[19] = "%d" % started
-    with open(os.path.join(directory, str(pid), "stat"), "w") as handle:
+    with open(os.path.join(proc, str(pid), "stat"), "w") as handle:
         handle.write("%d (a window) %s\n" % (pid, " ".join(fields)))
-    return directory
+    return pid
 
 
 def fake_child(proc, pid, comm, parent=None, cmdline=None):
@@ -2614,6 +2621,58 @@ class FeedingFromThePanel(unittest.TestCase):
                                 self.larder, proc=self.proc)
         self.assertFalse(result["ok"])
         self.assertEqual(self.larder.taken, [])
+
+    def test_a_meal_through_one_window_fills_the_whole_creature(self):
+        fake_process(self.proc, 5151, age_seconds=60.0)
+        clients = [self.window, window("0x2", "foot", pid=5151)]
+        before = creatures.stomach(clients, self.book, self.proc)["hunger"]
+        result = creatures.feed(clients[1], "staple", self.book, self.larder,
+                                now=1000.0, proc=self.proc, clients=clients)
+        self.assertTrue(result["ok"], result["message"])
+        after = creatures.stomach(clients, self.book, self.proc)["hunger"]
+        self.assertEqual(before - after, 34)
+        self.assertEqual(self.book.eaten(4242), 34,
+                         "written against the window with the room for it")
+
+    def test_a_new_window_eats_on_its_elder_s_appetite(self):
+        # A minute-old window is full before it starts. Opened beside an
+        # eight-hour-old one of the same class, it is that creature, and the
+        # creature is hungry - which is also why the second window cannot be
+        # used to earn a second helping of experience.
+        fake_process(self.proc, 5151, age_seconds=60.0)
+        young = window("0x2", "foot", pid=5151)
+        alone = creatures.feed(young, "staple", self.book, self.larder,
+                               now=1000.0, proc=self.proc)
+        self.assertFalse(alone["ok"])
+        self.assertIn("full", alone["message"])
+        result = creatures.feed(young, "staple", self.book, self.larder,
+                                now=1000.0, proc=self.proc,
+                                clients=[self.window, young])
+        self.assertTrue(result["ok"], result["message"])
+
+    def test_a_second_window_is_no_second_helping(self):
+        fake_process(self.proc, 5151, age_seconds=60.0)
+        clients = [self.window, window("0x2", "foot", pid=5151)]
+        room = creatures.stomach(clients, self.book, self.proc)["hunger"]
+        while creatures.feed(clients[1], "staple", self.book, self.larder,
+                             now=1000.0, proc=self.proc,
+                             clients=clients)["ok"]:
+            pass
+        eaten = self.book.eaten(4242) + self.book.eaten(5151)
+        self.assertLessEqual(eaten, room, "one appetite between them")
+        self.assertGreater(eaten, battles.appetite(60.0),
+                           "and it is the elder's appetite, not the newcomer's")
+
+    def test_both_ways_in_hand_the_window_list_to_the_meal(self):
+        # The daemon and the CLI both feed, and the CLI feeds with the daemon
+        # stopped. If either forgot the window list, that way in would be the
+        # one appetite per window again - and the second helping with it.
+        for name in ("battles", "battles-ctl"):
+            with open(os.path.join(ROOT, "bin", name)) as handle:
+                source = handle.read()
+            self.assertIn("clients=clients", source,
+                          "%s feeds without knowing what the creature is"
+                          % name)
 
     def test_food_that_does_not_exist_is_a_sentence_not_a_crash(self):
         self.assertFalse(self.feed("caviar")["ok"])
@@ -2901,6 +2960,37 @@ class TheRoster(unittest.TestCase):
                           window("0x2", "firefox")])
         self.assertEqual(rows[0]["address"], "0x2",
                          "the full one drops below the empty one")
+
+    def test_one_creature_however_many_windows_it_has_open(self):
+        # Two Braves are one creature with two bodies: every number on the
+        # row but the address is the class's, so two rows would have been the
+        # same creature written out twice.
+        fake_process(self.proc, 5151, age_seconds=60.0)
+        rows = self.rows([window("0x2", "foot", pid=5151),
+                          window("0x1", "foot", pid=4242)])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["count"], 2)
+        self.assertEqual([body["address"] for body in rows[0]["instances"]],
+                         ["0x1", "0x2"], "eldest first, whatever the order in")
+        self.assertEqual(rows[0]["address"], "0x1",
+                         "the eldest window speaks for the class")
+
+    def test_the_windows_of_one_class_share_one_appetite(self):
+        fake_process(self.proc, 5151, age_seconds=60.0)
+        clients = [window("0x1", "foot", pid=4242),
+                   window("0x2", "foot", pid=5151)]
+        alone = self.rows([clients[0]])[0]
+        together = self.rows(clients)[0]
+        self.assertEqual(together["appetite"], alone["appetite"],
+                         "a second window buys no second stomach")
+        self.assertEqual(together["uptime"], alone["uptime"],
+                         "and the appetite is the elder's, which bought it")
+        # What either window eats, the creature has eaten: the record the
+        # meal pays into is the class's, so the cap has to be too.
+        self.book.consume(5151, 12, now=1000.0)
+        after = self.rows(clients)[0]
+        self.assertEqual(after["eaten"], 12)
+        self.assertEqual(after["hunger"], together["hunger"] - 12)
 
     def test_a_window_with_no_readable_process_cannot_be_fed(self):
         rows = self.rows([window("0x1", "foot")])

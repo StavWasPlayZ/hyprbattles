@@ -118,8 +118,15 @@ Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
   sleeping list needs.
 - **A creature is its window class, never its address** (`lib/creatures.py`).
   Addresses are recycled; a record kept under one would be lost on restart and
-  then inherited by a stranger. An *appetite* is per window, keyed by pid and
-  process start time, and swept when the window dies.
+  then inherited by a stranger. So is the roster: every open window of a class
+  is **one row** with a `count`, an `instances` list and one appetite - the
+  eldest window's - that all of them eat against, or opening a second window
+  of something would double the experience it can be fed (`creatures.stomach`,
+  `TheRoster`). An *appetite entry* is still per window, keyed by pid and
+  process start time and swept when the window dies, because that is the only
+  key a meal can be written against; `creatures._mouth` picks which window
+  gets the note, and `feed` takes the window list to know what the creature
+  is.
 - **The one class a window can borrow is the agent running in it.** Claude
   Code and Codex are not windows, and their titles name your work rather than
   themselves, so `AGENT` is found by walking the process tree under a

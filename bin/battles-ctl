@@ -20,18 +20,23 @@
                                 # swap the move in slot 0-3 for one it knows.
                                 # It has to keep two of its own type.
 
-    battles-ctl roster          # every open window as a creature: level,
-                                # stage, what it has won and how hungry it is
+    battles-ctl roster          # every creature with a window open: level,
+                                # stage, what it has won and how hungry it is.
+                                # One line per class, with a x2 when it has
+                                # more than one window open - they share a
+                                # record and an appetite
     battles-ctl roster --json   # the same, as the bar panel reads it
     battles-ctl sleeping        # the creatures whose windows are shut. They
                                 # keep their levels and their moves; they have
                                 # no appetite, because they have no window.
     battles-ctl feed <addr> <shelf>
-                                # feed one window one portion. The machine has
-                                # to have the food spare and the window has to
-                                # have the appetite for it; an older window
-                                # has more. Levels are earned this way, and
-                                # enough of them evolve the creature.
+                                # feed one creature one portion, through any
+                                # of its windows. The machine has to have the
+                                # food spare and the creature has to have the
+                                # appetite for it - its eldest window's age
+                                # buys that, and every window of the class
+                                # eats against it. Levels are earned this
+                                # way, and enough of them evolve the creature.
 
     battles-ctl assets          # which sound is coming from which file, and
                                 # why. The thing to run when your own file is
@@ -187,7 +192,11 @@ def ask(message):
         client.bind("")             # abstract autobind, so the reply lands here
         client.settimeout(1.0)
         client.sendto(message.encode(), SOCKET_PATH)
-        return json.loads(client.recv(8192).decode())
+        # A roster is every window on the machine with its whole learnset,
+        # which passed 8 KiB long ago: a short buffer here truncated the
+        # datagram, the JSON failed to parse and every read quietly fell back
+        # to doing the work again locally.
+        return json.loads(client.recv(1 << 20).decode())
 
 
 def larder():
@@ -221,23 +230,28 @@ def local_roster():
 
 def local_feed(address, shelf_key):
     hypr = hyprland.Hyprland()
+    store = creatures.Store()
     clients = hypr.query("clients") or []
-    window = None
-    for client in clients:
-        if str(client.get("address") or "") == str(address):
-            window = client
-            break
+    window = creatures.find(address, clients, store)
     if not window:
         return {"ok": False, "message": "That window is gone."}
-    return creatures.feed(window, shelf_key, creatures.Store(), larder())
+    return creatures.feed(window, shelf_key, store, larder(), clients=clients)
 
 
 def window_row(address):
-    """One window's roster row, read the way the daemon would read it."""
+    """One window's roster row, read the way the daemon would read it. A row
+    is a class, so any of its windows' addresses finds it."""
     for row in local_roster()["roster"]:
-        if str(row["address"]) == str(address):
+        if str(address) in row_addresses(row):
             return row
     return None
+
+
+def row_addresses(row):
+    """Every address a roster row answers to: the one it is listed under, and
+    every other window of the same creature."""
+    return {str(row.get("address") or "")} | {
+        str(body.get("address") or "") for body in row.get("instances") or []}
 
 
 def local_teach(address, slot, move):
@@ -276,8 +290,14 @@ def print_roster(state):
         return 0
     for row in rows:
         stars = "*" * max(0, int(row.get("stage", 1)) - 1)
-        print("%-14s %-6s L%-3d %-2s %4d/%-4d hunger  %2dW %2dL  %s" % (
-            row["name"], row["type"], row["level"], stars,
+        # One line per creature: a class with three windows open is one
+        # creature wearing a count, not three lines saying the same thing.
+        count = int(row.get("count", 1) or 1)
+        name = row["name"] + (" x%d" % count if count > 1 else "")
+        # Wide enough for a 12-letter name and its count: a column that a
+        # "x2" pushes out of line is a table that stops being one.
+        print("%-17s %-6s L%-3d %-2s %4d/%-4d hunger  %2dW %2dL  %s" % (
+            name, row["type"], row["level"], stars,
             row["hunger"], row["appetite"], row["wins"], row["losses"],
             row["address"]))
     return 0
@@ -394,8 +414,8 @@ def main(argv):
         wanted = arguments[0] if arguments else ""
         row = None
         for candidate in (state.get("roster") or []) + (state.get("sleeping") or []):
-            if wanted and wanted in (str(candidate["address"]),
-                                     str(candidate["key"])):
+            if wanted and (wanted == str(candidate["key"])
+                           or wanted in row_addresses(candidate)):
                 row = candidate
         if not row:
             print("no such window: %s" % wanted, file=sys.stderr)
