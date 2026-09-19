@@ -116,17 +116,23 @@ Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
   launch, so an address-seeded creature re-rolled itself every restart while
   keeping its level. A shut window has no address at all, which is what the
   sleeping list needs.
+- **An appetite outlives the window, and so do the meals**
+  (`AnAppetiteThatOutlivesTheWindow`). Both are the class's and both live in
+  `creatures.json`: the hours its windows have been open are banked as they
+  age (`Store.bank`, `Store.lived`) and eating drains them
+  (`Store.consume`), so a reopened window is as hungry as it was left and
+  closing a full one is not a second helping. The two move together or one of
+  them is a loophole. Nothing accrues while it sleeps, nothing is banked
+  twice, and several windows of one class buy one hour an hour between them.
+  The per-pid entry left in the file is only the note saying how much of a
+  window's age has been counted; it dies with the pid and the hours do not.
 - **A creature is its window class, never its address** (`lib/creatures.py`).
   Addresses are recycled; a record kept under one would be lost on restart and
   then inherited by a stranger. So is the roster: every open window of a class
-  is **one row** with a `count`, an `instances` list and one appetite - the
-  eldest window's - that all of them eat against, or opening a second window
-  of something would double the experience it can be fed (`creatures.stomach`,
-  `TheRoster`). An *appetite entry* is still per window, keyed by pid and
-  process start time and swept when the window dies, because that is the only
-  key a meal can be written against; `creatures._mouth` picks which window
-  gets the note, and `feed` takes the window list to know what the creature
-  is.
+  is **one row** with a `count`, an `instances` list and one appetite that all
+  of them eat against, or opening a second window of something would double
+  the experience it can be fed (`creatures.stomach`, `TheRoster`). `feed`
+  takes the window list to know what the creature is.
 - **The one class a window can borrow is the agent running in it.** Claude
   Code and Codex are not windows, and their titles name your work rather than
   themselves, so `AGENT` is found by walking the process tree under a
@@ -162,8 +168,8 @@ Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
 
 `~/.local/state/hyprscroll2d/` holds `battles-disabled` (presence = off),
 `battles-assets` (the mode), `pantry.json` (the eaten-portions ledger) and
-`creatures.json` (what each class has earned, and what each live window has
-eaten).
+`creatures.json` (what each class has earned, including the hours its windows
+have been open and everything it has eaten).
 Files, because the Omarchy menu row's `checked` condition and `hyprbattles-ctl`
 must answer while the shell is restarting. `hyprbattles-ctl` reads/writes them
 directly and only *nudges* the daemon afterwards.

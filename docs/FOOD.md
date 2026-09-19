@@ -131,14 +131,15 @@ the moment a battle started and not exist in between, so there was no HP
 sitting anywhere to heal and nowhere to keep what a meal had done.
 
 What unlocked it was giving creatures a record of their own, keyed by window
-class so it can outlive the window, and an appetite bought with uptime so a
-panel with a feed button is not a level button. Both are in
+class so it can outlive the window, and an appetite bought with open time so
+a panel with a feed button is not a level button. Both are in
 [CREATURES.md](CREATURES.md); the short version is that feeding is gated
 twice, and the pantry is only the first gate:
 
 - the machine has to have the food spare - this document, and the ledger;
-- the creature has to have room for it - the age of its eldest open window,
-  shared by every window of its class.
+- the creature has to have room for it - the hours its windows have been
+  open, banked against the class and drained by eating, so that neither the
+  appetite nor the meals end when the window does.
 
 A meal outside a battle heals nothing. There is nothing to heal: HP only
 exists while a fight is on. It buys experience, and enough of that evolves the

@@ -14,11 +14,17 @@ That means every window of a class shares one record. Two terminals are the
 same creature twice, the way two of the same monster are. Feeding one feeds
 "terminals", and that is the honest reading of a class-keyed identity.
 
-**How much can it eat?** That one *is* per window, and it is bought with
-uptime: a window that has been open all day has an appetite, a window opened
-a minute ago has almost none. Uptime comes from `/proc/<pid>/stat`, not from
-anything this daemon wrote down, so it survives a daemon restart and cannot
-be farmed by reopening the panel.
+**How much can it eat?** That one is the class's too, and it is bought with
+open time: a creature whose windows have been up all day has an appetite, one
+opened a minute ago has almost none. The reading is still `/proc/<pid>/stat`
+and nothing else - but it is *banked* as the window ages (`Store.bank`), so
+the hours survive the window closing and the machine restarting the way the
+levels do. Otherwise the answer to a full creature would be to close it and
+open it again, which is why what it has eaten is banked beside them.
+
+Nothing accrues while it sleeps. Open time is the price of an appetite, and a
+shut window is not paying it - so a creature comes back with exactly the
+appetite it went to sleep with.
 
 **And what is it running?** A terminal with Claude Code or Codex in it is an
 agent rather than a terminal, and neither its class nor its title says so -
@@ -40,9 +46,16 @@ STATE_HOME = (os.environ.get("XDG_STATE_HOME")
               or os.path.expanduser("~/.local/state"))
 STORE_PATH = os.path.join(STATE_HOME, "hyprscroll2d", "creatures.json")
 
-# An appetite entry is worth keeping only while its window is alive. They are
-# tiny, so the file is swept on save rather than on every read.
-MAX_APPETITE_ENTRIES = 400
+# A banking entry - how much of one window's age has already been counted -
+# is worth keeping only while that window is alive. They are tiny, so the
+# file is swept on save rather than on every read.
+MAX_BANK_ENTRIES = 400
+
+# How much unbanked age is worth a write. Banking runs on every glance at the
+# roster and every census tick; without a floor that would be a file written
+# every few seconds, and with it a window that dies between banks costs its
+# creature at most this much open time - a third of one nourishment.
+BANK_INTERVAL = 60.0
 
 
 def species_key(window, proc="/proc"):
@@ -87,7 +100,8 @@ def ours(key):
 def sleeping_window(key):
     """A window dict for a creature whose window is closed. It has a class,
     which is all a creature ever really was, and no address, no pid and no
-    size - so it has no appetite and cannot be fed."""
+    size - so nothing of it can be fed, though the appetite it banked while
+    it was open is still there waiting for it."""
     return {"initialClass": str(key or "window"), "address": "",
             "class": str(key or "window")}
 
@@ -174,6 +188,7 @@ def instance_key(pid, proc="/proc"):
 AGENT_SCAN_DEPTH = 8        # foot -> shell -> agent, with room for tmux, ssh
 AGENT_SCAN_LIMIT = 96       # processes looked at before giving up
 AGENT_CACHE_SECONDS = 4.0   # a tree is walked at most this often per window
+AGENT_CACHE_ENTRIES = 400   # windows remembered before the cache is dropped
 
 # Interpreters that are never the agent: when one of these is the command,
 # what it is running is (`node .../codex`, `python -m aider`).
@@ -280,7 +295,7 @@ def agent_of(pid, proc="/proc"):
         frontier = following
 
     _agent_cache[key] = (now + AGENT_CACHE_SECONDS, found)
-    if len(_agent_cache) > MAX_APPETITE_ENTRIES:
+    if len(_agent_cache) > AGENT_CACHE_ENTRIES:
         _agent_cache.clear()
     return found
 
@@ -305,16 +320,19 @@ def agent_in_window(window, proc="/proc"):
 class Store:
     """The record book. Loaded once, saved after every change.
 
-    Two shelves inside one file: what each species has earned, which lasts
-    forever, and what each live window has eaten, which lasts as long as the
-    window does.
+    Two shelves inside one file, and only one of them is a record. What each
+    species has earned lasts forever: experience, wins, moves, the hours its
+    windows have been open and everything it has ever eaten. The other shelf
+    is bookkeeping - how much of one live window's age has already been
+    counted into its creature's hours - and it is thrown away with the
+    window, because a dead pid can never be asked again.
     """
 
     def __init__(self, path=STORE_PATH, proc="/proc"):
         self.path = path
         self.proc = proc
         self.species = {}
-        self.appetite = {}
+        self.banked = {}
         self.load()
 
     # ------------------------------------------------------------- file io
@@ -328,14 +346,19 @@ class Store:
         if not isinstance(data, dict):
             data = {}
         species = data.get("species")
-        appetite = data.get("appetite")
+        banked = data.get("banked")
         self.species = species if isinstance(species, dict) else {}
-        self.appetite = appetite if isinstance(appetite, dict) else {}
+        # Version 1 kept a per-window ledger of meals under "appetite", which
+        # died with the window. There is nothing in it to carry forward - a
+        # pid says nothing about which creature ate - so it is simply
+        # dropped, and every creature's first day under this version starts
+        # with an empty stomach.
+        self.banked = banked if isinstance(banked, dict) else {}
 
     def save(self):
         self._sweep()
-        payload = {"version": 1, "species": self.species,
-                   "appetite": self.appetite}
+        payload = {"version": 2, "species": self.species,
+                   "banked": self.banked}
         try:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             temporary = self.path + ".tmp"
@@ -348,9 +371,11 @@ class Store:
             pass
 
     def _sweep(self):
-        """Forget what has eaten its last meal: an appetite entry whose window
-        is gone. The key carries the start time, so a pid that came back as
-        something else does not keep the old entry alive.
+        """Forget the bookkeeping for a window that is gone. Its hours are
+        already in its creature's record; the note saying how many of them
+        had been counted is no use to anybody once the pid is dead. The key
+        carries the start time, so a pid that came back as something else
+        does not keep the old note alive.
 
         Also forget anything of ours that an older version wrote down, so the
         exemption cleans up after itself rather than needing the file edited
@@ -358,18 +383,18 @@ class Store:
         for key in [key for key in self.species if ours(key)]:
             del self.species[key]
         alive = {}
-        for key, value in self.appetite.items():
+        for key, value in self.banked.items():
             pid, _, started = str(key).partition(":")
             if not pid.isdigit():
                 continue
             if instance_key(int(pid), self.proc) == key:
                 alive[key] = value
-        if len(alive) > MAX_APPETITE_ENTRIES:
+        if len(alive) > MAX_BANK_ENTRIES:
             ordered = sorted(alive.items(),
                              key=lambda item: item[1].get("at", 0.0),
                              reverse=True)
-            alive = dict(ordered[:MAX_APPETITE_ENTRIES])
-        self.appetite = alive
+            alive = dict(ordered[:MAX_BANK_ENTRIES])
+        self.banked = alive
 
     # ------------------------------------------------------------- species
 
@@ -384,9 +409,18 @@ class Store:
             seen = float(entry.get("seen", 0.0) or 0.0)
         except (TypeError, ValueError):
             seen = 0.0
+        try:
+            lived = max(0.0, float(entry.get("lived", 0.0) or 0.0))
+        except (TypeError, ValueError):
+            lived = 0.0
         return {
             "seen": seen,
             "key": key,
+            # The two halves of an appetite, both of them the class's and
+            # both of them lasting: how long its windows have been open all
+            # told, and how much it has eaten against that.
+            "lived": lived,
+            "eaten": max(0, int(entry.get("eaten", 0) or 0)),
             "xp": max(0, int(entry.get("xp", 0) or 0)),
             "wins": max(0, int(entry.get("wins", 0) or 0)),
             "losses": max(0, int(entry.get("losses", 0) or 0)),
@@ -404,10 +438,14 @@ class Store:
     SEEN_INTERVAL = 300.0
 
     def touch(self, windows, now=None):
-        """Note that these windows are open. Returns True if anything was
-        written down."""
+        """Note that these windows are open, and count the time they have
+        been. Returns True if anything was written down.
+
+        The banking rides here because this is what the daemon and the CLI
+        already call whenever they have a window list in their hands - the
+        census, every roster, every glance at the panel."""
         now = time.time() if now is None else now
-        changed = False
+        changed = self.bank(windows, now)
         for window in windows or []:
             if not isinstance(window, dict):
                 continue
@@ -460,33 +498,108 @@ class Store:
 
     # ------------------------------------------------------------ appetite
 
-    def eaten(self, pid):
-        """How much nourishment this window has already taken."""
+    def _counted(self, pid):
+        """How much of this window's age has already been banked."""
         key = instance_key(pid, self.proc)
         if not key:
-            return 0
-        entry = self.appetite.get(key) or {}
+            return 0.0
+        note = self.banked.get(key) or {}
         try:
-            return max(0, int(entry.get("eaten", 0) or 0))
+            return max(0.0, float(note.get("lived", 0.0) or 0.0))
         except (TypeError, ValueError):
-            return 0
+            return 0.0
 
-    def consume(self, pid, nourish, now=None):
-        """Write down a meal against one window. Returns the new total, or
-        None when the window cannot be identified and so cannot be fed."""
-        key = instance_key(pid, self.proc)
-        if not key:
-            return None
-        entry = self.appetite.get(key) or {}
-        try:
-            total = max(0, int(entry.get("eaten", 0) or 0))
-        except (TypeError, ValueError):
-            total = 0
-        total += max(0, int(nourish))
-        self.appetite[key] = {"eaten": total,
-                              "at": now if now is not None else time.time()}
+    def bank(self, windows, now=None):
+        """Count how long these windows have been open into the records of
+        the creatures they belong to. Returns True if anything was written.
+
+        This is the one place an appetite is earned. A window's age is read
+        off `/proc` as it always was, but the part of it that has not been
+        counted yet is added to the creature's hours and noted against the
+        window, so nothing is counted twice and the total outlives the pid.
+        Windows that have not aged BANK_INTERVAL since the last count are
+        left alone, or this would be a file written every few seconds.
+
+        Several windows of one creature buy it **one** hour an hour, not one
+        each: the longest of their fresh stretches is what is banked, because
+        the creature was open for that long and no longer. Otherwise the way
+        to feed something would be to open six of it, which is the thing the
+        one shared stomach exists to stop.
+        """
+        now = time.time() if now is None else now
+        fresh = {}
+        notes = {}
+        for window in windows or []:
+            if not isinstance(window, dict):
+                continue
+            pid = window.get("pid")
+            if not pid:
+                continue
+            key = instance_key(pid, self.proc)
+            if not key:
+                continue
+            name = species_key(window, self.proc)
+            if ours(name):
+                continue
+            age = window_uptime(pid, self.proc)
+            since = age - self._counted(pid)
+            if since < BANK_INTERVAL:
+                continue
+            fresh[name] = max(fresh.get(name, 0.0), since)
+            notes[key] = age
+        for name, since in fresh.items():
+            entry = self.species.get(name)
+            if not isinstance(entry, dict):
+                entry = {"xp": 0, "wins": 0, "losses": 0, "meals": 0,
+                         "seen": now}
+                self.species[name] = entry
+            try:
+                lived = max(0.0, float(entry.get("lived", 0.0) or 0.0))
+            except (TypeError, ValueError):
+                lived = 0.0
+            entry["lived"] = lived + since
+        for key, age in notes.items():
+            self.banked[key] = {"lived": age, "at": now}
+        if notes:
+            self.save()
+        return bool(notes)
+
+    def lived(self, windows):
+        """How much open time this creature has behind it: the hours in its
+        record, plus the longest stretch any of its live windows has aged
+        since it was last banked - the same sum `bank` will write down when
+        it next runs. Reads; the writing is `bank`.
+        """
+        windows = [one for one in windows or [] if isinstance(one, dict)]
+        if not windows:
+            return 0.0
+        fresh = 0.0
+        for one in windows:
+            pid = one.get("pid")
+            if not pid:
+                continue
+            fresh = max(fresh, window_uptime(pid, self.proc) - self._counted(pid))
+        return self.record(windows[0])["lived"] + max(0.0, fresh)
+
+    def eaten(self, window):
+        """How much nourishment this creature has taken, ever."""
+        return self.record(window)["eaten"]
+
+    def consume(self, window, nourish, now=None):
+        """Write down a meal against a creature. Returns the new total.
+
+        Against the class, not the window: appetite is the creature's, and a
+        meal that died with the window would make closing one the way to eat
+        twice.
+        """
+        record = self.record(window)
+        record["eaten"] += max(0, int(nourish))
+        record["seen"] = time.time() if now is None else now
+        stored = dict(record)
+        stored.pop("key", None)
+        self.species[record["key"]] = stored
         self.save()
-        return total
+        return record["eaten"]
 
 
 # ------------------------------------------------------------- the roster
@@ -568,44 +681,48 @@ def instances(window, clients, proc="/proc"):
 
 
 def stomach(windows, store, proc="/proc"):
-    """One class's appetite, and what its windows have eaten against it.
+    """One creature's appetite, and how much of it is taken.
 
-    The appetite is the eldest window's, because an appetite is bought with
-    uptime and that is the window that bought it; what every instance has
-    eaten counts against that one number. One stomach per creature, or a
-    second window of something would double what it can be fed - and a meal
-    is experience, which belongs to the class and not to the window.
+    Everything here belongs to the class. The hours are every window of it
+    that has ever been open, banked; the meals are every meal it has ever
+    had. One stomach per creature, or a second window of something would
+    double what it can be fed - and a meal is experience, which belongs to
+    the class and not to the window.
+
+    `uptime` is the odd one out and is only ever shown, never counted: the
+    eldest live window's own age, because "open for 20 minutes" is a thing
+    somebody can see on their screen and check.
     """
+    windows = [one for one in windows or [] if isinstance(one, dict)]
     oldest = 0.0
-    eaten = 0
-    for one in windows or []:
-        pid = (one or {}).get("pid")
-        if not pid:
-            continue
-        oldest = max(oldest, window_uptime(pid, proc))
-        eaten += store.eaten(pid)
-    return {"uptime": oldest, "appetite": rules.appetite(oldest),
-            "eaten": eaten, "hunger": rules.hunger(oldest, eaten)}
+    for one in windows:
+        pid = one.get("pid")
+        if pid:
+            oldest = max(oldest, window_uptime(pid, proc))
+    lived = store.lived(windows)
+    eaten = store.eaten(windows[0]) if windows else 0
+    appetite = rules.appetite(lived)
+    room = rules.hunger(lived, eaten)
+    # What is in it now, rather than what it has eaten since the day it was
+    # installed: the lifetime figure would run off the end of any bar drawn
+    # with it, and "how full is it" is the question a bar is asked.
+    return {"uptime": oldest, "lived": lived, "appetite": appetite,
+            "eaten": appetite - room, "hunger": room}
 
 
 def _mouth(windows, store, proc="/proc"):
-    """Which window a meal is written down against.
+    """Whether any of these windows can eat, and which one is asked.
 
-    The one with the most room of its own, so the entry lands where it is
-    least likely to be swept away first, and the eldest when none of them has
-    any room left. What may be eaten at all is the class's appetite either
-    way; this only decides where the note goes.
+    The meal itself goes against the class, so this decides nothing about
+    where it lands - only whether there is a live window to put the food in
+    front of. The eldest that `/proc` will vouch for, the way the eldest
+    speaks for the creature everywhere else.
     """
-    best = None
     for one in windows or []:
         pid = (one or {}).get("pid")
-        if not pid or not instance_key(pid, proc):
-            continue
-        uptime = window_uptime(pid, proc)
-        rank = (rules.hunger(uptime, store.eaten(pid)), uptime)
-        if best is None or rank > best[0]:
-            best = (rank, one)
-    return best[1] if best else None
+        if pid and instance_key(pid, proc):
+            return one
+    return None
 
 
 def roster(clients, store, larder=None, now=None, proc="/proc"):
@@ -642,7 +759,6 @@ def roster(clients, store, larder=None, now=None, proc="/proc"):
             "address": str(one.get("address") or ""),
             "title": str(one.get("title") or ""),
             "uptime": int(_age(one, proc)),
-            "eaten": store.eaten(one["pid"]) if one.get("pid") else 0,
             "canFeed": bool(one.get("pid"))
                        and bool(instance_key(one["pid"], proc)),
         } for one in windows]
@@ -678,9 +794,11 @@ def roster(clients, store, larder=None, now=None, proc="/proc"):
             # things on the row that belong to one window.
             "count": len(bodies),
             "instances": bodies,
-            # The eldest window's uptime, because that is the appetite the
-            # creature has, and every instance's meals against it.
+            # The eldest window's uptime, which is what somebody can see for
+            # themselves; the hours that actually bought the appetite are
+            # every window of it that has ever been open, banked.
             "uptime": int(room["uptime"]),
+            "lived": int(room["lived"]),
             "appetite": room["appetite"],
             "eaten": room["eaten"],
             "hunger": room["hunger"],
@@ -724,6 +842,7 @@ def sleeping(clients, store, now=None):
         window = sleeping_window(key)
         record = store.record(window)
         creature = rules.creature(window, record)
+        room = stomach([window], store, store.proc)
         rows.append({
             "address": "",
             "key": key,
@@ -753,10 +872,14 @@ def sleeping(clients, store, now=None):
             # creature the way a waking one is, and neither is a list.
             "count": 0,
             "instances": [],
+            # No window, so no uptime to show - but the hours it banked while
+            # it had one are still its, and so is the appetite they bought.
+            # It simply has no mouth to put anything in.
             "uptime": 0,
-            "appetite": 0,
-            "eaten": 0,
-            "hunger": 0,
+            "lived": int(room["lived"]),
+            "appetite": room["appetite"],
+            "eaten": room["eaten"],
+            "hunger": room["hunger"],
             "canFeed": False,
             "sleeping": True,
             "seen": record["seen"],
@@ -788,13 +911,14 @@ def feed(window, shelf_key, store, larder, now=None, proc="/proc",
 
     Two gates, and they are independent on purpose: the machine has to have
     the food spare (the pantry's ledger) and the creature has to have room
-    for it (its appetite, bought with uptime). Either one refusing is a plain
-    sentence back, never an exception.
+    for it (its appetite, bought with open time). Either one refusing is a
+    plain sentence back, never an exception.
 
     Given the window list, the creature is every open window of its class and
-    they share the one appetite; given none, it is the window handed in. The
-    meal is written down against one of those windows, because that is what
-    an appetite entry is keyed by, and the experience against the class.
+    they share the one appetite; given none, it is the window handed in. Both
+    the meal and the experience are written down against the class - but it
+    still has to have a window open to eat with, which is the one thing left
+    that a pid is asked.
 
     Returns a dict: `ok`, a `message` to show, and - when something was eaten
     - the `serving`, the new `record`, and `evolved` when the experience
@@ -813,7 +937,10 @@ def feed(window, shelf_key, store, larder, now=None, proc="/proc",
     # From here on the eldest open window is the creature: the record, the
     # name and the evolution are its class's, whichever window was pointed at.
     window = windows[0]
-    pid = mouth.get("pid")
+    # The hours up to this moment, before the room for the meal is measured:
+    # a creature that has aged into its next mouthful while nobody was
+    # looking should not be told it is full.
+    store.bank(windows, now)
 
     shelves = {shelf["key"]: shelf for shelf in (larder.stock() or [])}
     shelf = shelves.get(str(shelf_key))
@@ -824,8 +951,8 @@ def feed(window, shelf_key, store, larder, now=None, proc="/proc",
     nourish = int(shelf.get("nourish", 0))
     if room < nourish:
         return {"ok": False,
-                "message": "%s is too full for that. Older windows eat more."
-                           % rules.display_name(window)}
+                "message": "%s is too full for that. Leave it open and it "
+                           "will be hungry again." % rules.display_name(window)}
     if shelf.get("servings", 0) <= 0:
         return {"ok": False,
                 "message": "There is no %s spare." % shelf["name"]}
@@ -837,7 +964,7 @@ def feed(window, shelf_key, store, larder, now=None, proc="/proc",
                            % shelf["name"]}
 
     before = rules.creature(window, store.record(window))
-    store.consume(pid, nourish, now)
+    store.consume(window, nourish, now)
     record = store.award(window, xp=rules.xp_for_nourish(nourish), meals=1)
     after = rules.creature(window, record)
 

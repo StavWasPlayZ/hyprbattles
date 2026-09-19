@@ -22,8 +22,9 @@ Windows remember. A creature is its window class, so the level your terminal
 earned this morning is still its level tomorrow: meals and battles buy
 experience, experience buys levels, and at level 12 and 25 it **evolves** -
 a new name, better moves, and eight seconds of the overlay saying so. How much
-a window can eat is bought with how long it has been open, so an old window
-has an appetite and a fresh one does not. See
+a creature can eat is bought with how long its windows have been open, and
+it is remembered the way the level is - close it, restart, and it is as
+hungry as you left it. See
 [`docs/CREATURES.md`](docs/CREATURES.md).
 
 Levels teach it things, too. A creature knows more moves than the four it

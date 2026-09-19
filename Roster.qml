@@ -140,9 +140,9 @@ Panel {
     readonly property int pageTop: pagePad + Style.space(16) / 2
 
     property var rows: []
-    // Creatures whose windows are shut. They keep their levels, their record
-    // and their moves; what they do not keep is an appetite, because an
-    // appetite is bought with uptime and they have none.
+    // Creatures whose windows are shut. They keep their levels, their record,
+    // their moves and the appetite their windows earned while they were
+    // open - it simply stands still, and there is nothing there to feed.
     property var sleepingRows: []
     property var shelves: []
     // The cards on screen right now, whichever list is showing. Named once
@@ -251,15 +251,20 @@ Panel {
             { name: "DEFENSE", value: String(one.defense) },
             { name: "SPEED", value: String(one.speed) },
             { name: "MEALS", value: String(one.meals || 0) },
-            { name: "APPETITE", value: one.sleeping ? "none while shut"
-                : Number(one.hunger || 0) + " of " + Number(one.appetite || 0) },
+            // Kept while it sleeps, because it was bought while it was
+            // open: the number is the same one it will wake up with.
+            { name: "APPETITE", value: Number(one.hunger || 0) + " of "
+                + Number(one.appetite || 0)
+                + (one.sleeping ? ", waiting" : "") },
             { name: "WINDOWS", value: one.sleeping
                 ? "none open" : String(Number(one.count || 1)) },
-            // The eldest window's, because that is the one whose age bought
-            // the appetite the whole creature eats against.
+            // The eldest window's own age, which is the one thing here that
+            // can be seen on screen. The hours that bought the appetite are
+            // every window of it that has ever been open.
             { name: "OPEN FOR", value: one.sleeping ? "not open"
                 : shortTime(one.uptime) + (Number(one.count || 1) > 1
                                            ? " (eldest)" : "") },
+            { name: "OPEN ALL TOLD", value: shortTime(one.lived) },
             { name: "EXPERIENCE", value: Number(one.xpNeeded || 0) > 0
                 ? Number(one.xpInto || 0) + " / " + Number(one.xpNeeded)
                 : "at the cap" },
@@ -360,7 +365,7 @@ Panel {
     // feed, and a line tacked onto the end of a description is read last if
     // it is read at all.
     readonly property string roomTip:
-        "TIP: appetite grows the longer a window is open."
+        "TIP: appetite grows for as long as a window is open."
 
     // The tip above whatever the view had to say.
     function withRoomTip(line, shelf) {
@@ -881,9 +886,10 @@ Panel {
                 // grows, which is the whole of the hunger
                 // rule drawn as one bar.
                 Rectangle {
-                    // An appetite bar means nothing without a window to be
-                    // hungry with.
-                    visible: !creature.row.sleeping
+                    // Drawn on a sleeping card too: the appetite it went to
+                    // sleep with is the one it will wake up with, and a card
+                    // that dropped the bar read as a creature that had lost
+                    // it. It just does not move, and cannot be fed.
                     width: parent.width
                     height: visible ? Math.max(2, Style.space(4)) : 0
                     radius: height / 2
@@ -899,10 +905,9 @@ Panel {
                 }
 
                 Text {
-                    // Nothing is said about a shut window here: the faded
-                    // card and the sleep mark say it, and an appetite line
-                    // would be a number it does not have.
-                    visible: !creature.row.sleeping
+                    // The same line on a shut window, because the appetite is
+                    // the same: what it cannot do is eat, and the faded card
+                    // and the sleep mark are what say so.
                     width: parent.width
                     text: creature.row.canEvolveNow
                         ? "One meal from evolving"

@@ -66,9 +66,10 @@ DISABLED_FLAG = os.path.join(STATE_HOME, "hyprscroll2d", "battles-disabled")
 # the food is a live reading of the machine, and this is the only thing that
 # stops the same 512 MiB being fed to a creature over and over.
 LEDGER_PATH = os.path.join(STATE_HOME, "hyprscroll2d", "pantry.json")
-# What every window class has earned, and what every live window has eaten
-# today. See lib/creatures.py: a level belongs to the class, so it outlives
-# the window, and an appetite belongs to the window, so it does not.
+# What every window class has earned: levels, wins, moves, the hours its
+# windows have been open and everything it has ever eaten. See
+# lib/creatures.py - all of it belongs to the class, so all of it outlives
+# any one window and the machine being restarted.
 CREATURES_PATH = creatures.STORE_PATH
 BAR_FLAG_PATH = os.path.join(STATE_HOME, "omarchy", "toggles", "bar-off")
 # What ships. A user's own files live outside the checkout and win or lose

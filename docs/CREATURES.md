@@ -144,10 +144,11 @@ the book on the next save. It is the game, not a player in it - the same rule
 the pantry follows, that a number has to be a reading of something real.
 
 A sleeping creature keeps everything it earned: its level, its stage, its
-record, its meals and its moves. What it does not have is an **appetite**,
-and that is not a rule imposed on it - appetite is bought from
-`/proc/<pid>` uptime, and a shut window has no process to buy it with. There
-is nothing there to be hungry. Feeding says so and costs nothing.
+record, its meals, its moves and its **appetite** - it bought that while it
+had a window, and closing one does not take it back. The card still draws the
+bar; it simply does not move. What it has not got is a mouth: there is no
+process there to put anything in front of, so feeding says so and costs
+nothing.
 
 Its **moves can still be changed**, for the same structural reason: moves
 belong to the class, not to the process. Picking a loadout for something you
@@ -214,36 +215,48 @@ at.
 
 ## Hunger
 
-How much a window can eat is bought with **how long it has been open**.
+How much a creature can eat is bought with **how long its windows have been
+open**.
 
-A window opened a minute ago is a hatchling with an appetite of 20. It gains
-18 more per hour it stays up, to a maximum of 200. Eating fills that up;
-nothing empties it again except closing the window, which is not a loophole -
-that really is a new window, with a new appetite and none of the old one's
-meals.
+A creature nobody has run for long is a hatchling with an appetite of 20. It
+gains 18 more per hour one of its windows is up, to a maximum of 200. Eating
+drains it again, and open time fills it back up: it is a bucket, not a
+lifetime allowance. Leave something open long enough and it is hungry again;
+leave it open for a week and it is still only owed the bucketful it can hold.
 
-Uptime comes off `/proc/<pid>/stat`, not out of anything this plugin wrote
-down. That matters: restarting the daemon, deleting the ledger or editing the
-records by hand cannot make a window older than it is.
+The hours are the **creature's**, and so are the meals. Both are written down
+in `creatures.json` beside the levels, so both survive the window closing and
+the machine restarting - reopen Firefox and it is exactly as hungry as you
+left it. That pairing is the whole rule: an appetite that outlived the window
+while the meals did not would make closing something and opening it again the
+way to feed it twice.
 
-When a creature has several windows open, the appetite is **the eldest
-window's**, and what every one of them has eaten counts against it. Appetite
-is bought with uptime, and that is the window that bought it; a window opened
-a moment ago brings a creature nothing, because the experience a meal pays
-for goes to the class either way. Otherwise the way to level anything would
-be to open six of it. The meal itself is still written down against one
-window - an appetite entry is keyed by pid and start time, and has to be, so
-that closing a window forgets it - and it goes against whichever of them has
-the most room of its own.
+Nothing accrues while it sleeps. Open time is the price of an appetite, and a
+shut window is not paying it - so a creature comes back with the appetite it
+went to sleep with, no more.
+
+The reading is still `/proc/<pid>/stat` and nothing else: a window's age is
+read off the process, and the part of it that has not been counted yet is
+added to the creature's hours and noted against the pid, so nothing is
+counted twice and nothing is invented. What the file holds is a sum of real
+readings, not a clock of its own.
+
+When a creature has several windows open, they share the one appetite and
+they buy it **one hour an hour between them**, not one each - the creature
+was open for that long and no longer. Otherwise the way to level anything
+would be to open six of it. The meal goes against the class the same way the
+experience does; the only thing a window is still asked for is whether it is
+there at all, because something has to be open to eat with.
 
 So there are two independent gates on feeding, and they fail differently:
 
 - **The machine has to have the food spare** - the pantry and its ledger, see
   [FOOD.md](FOOD.md).
-- **The window has to have room for it** - its appetite.
+- **The creature has to have room for it** - its appetite - and a window open
+  to eat with.
 
 Which is what stops a panel with a feed button from being a level button. You
-cannot feed a fresh window into a monster; you have to leave it open.
+cannot feed a fresh creature into a monster; you have to leave it open.
 
 ## The bar panel
 
@@ -303,8 +316,8 @@ information, and the button says which of the two it is instead of offering
 a meal it cannot serve - *No ZOMBIES spare* is the machine's doing and
 will right itself, *FOOT has room for 12, not 34* is the window's age and
 will not. When room is what is missing, the one thing there is to do about it
-takes the tip's first line, above the description - *TIP: appetite grows the
-longer a window is open* - because a full creature otherwise reads as one
+takes the tip's first line, above the description - *TIP: appetite grows for
+as long as a window is open* - because a full creature otherwise reads as one
 that is finished rather than one that is busy, and a line tacked on the end
 is read last if it is read at all.
 Feeding leaves you on the food and on the shelf you picked, meal or refusal:
@@ -355,16 +368,23 @@ hyprbattles-ctl feed <address> staple   # one portion of FREE RAM
 of its windows is open - type, level, stage, hunger out of appetite, the
 win-loss record, and the address to feed it with. That address is its eldest
 window's, and any of its windows' addresses will do on the way back in.
+`sleeping` prints the same appetite for the creatures that have no window,
+because they still have one; what they have not got is a mouth.
 
 ## What the tests hold still
 
 - A record is keyed by class, and survives the window closing.
-- An appetite entry belongs to one running window, is keyed by pid *and*
-  process start time so a recycled pid cannot inherit it, and is forgotten
-  when the window is gone.
-- A class with several windows open is one row, with one appetite - the
-  eldest window's - that all of them eat against. A second window is not a
-  second helping.
+- So does an appetite: the hours a creature's windows have been open and
+  everything it has eaten are both its class's, both written down, and both
+  still there after a restart. Closing a full window and opening it again is
+  not a second helping.
+- Nothing is banked twice, and nothing accrues while a creature sleeps. The
+  bookkeeping that says how much of a window's age has been counted is keyed
+  by pid *and* process start time, so a recycled pid cannot inherit it, and
+  is thrown away when the window is gone - the hours it bought are not.
+- A class with several windows open is one row with one appetite, which they
+  eat against and fill at one hour an hour between them. A second window is
+  not a second helping.
 - A refusal - full creature, bare shelf, unknown window, a move it has not
   learned - costs nothing: no portion leaves the pantry, no appetite is spent
   and the carried moves do not move.

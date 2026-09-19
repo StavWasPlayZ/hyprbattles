@@ -2522,29 +2522,84 @@ class TheRecordBook(unittest.TestCase):
         record = creatures.Store(self.path).record(window())
         self.assertEqual((record["xp"], record["wins"]), (0, 0))
 
-    def test_an_appetite_belongs_to_the_window_not_the_class(self):
+    def test_an_appetite_belongs_to_the_class_not_the_window(self):
         proc = fake_proc(pid=4242)
         try:
             book = creatures.Store(self.path, proc=proc)
-            book.consume(4242, 30, now=1000.0)
-            self.assertEqual(book.eaten(4242), 30)
-            # A pid nobody can read has no appetite entry, and so cannot eat.
-            self.assertEqual(book.eaten(999999), 0)
-            self.assertIsNone(book.consume(999999, 10))
+            book.consume(window("0x1", "foot", pid=4242), 30, now=1000.0)
+            # Another window of the same class is the same stomach, and so
+            # is the same class tomorrow with no window at all.
+            self.assertEqual(book.eaten(window("0x2", "foot", pid=5151)), 30)
+            self.assertEqual(book.eaten(creatures.sleeping_window("foot")), 30)
+            self.assertEqual(book.eaten(window("0x3", "firefox")), 0,
+                             "and a different creature has eaten nothing")
         finally:
             shutil.rmtree(proc, ignore_errors=True)
 
-    def test_an_appetite_is_forgotten_once_the_window_is_gone(self):
+    def test_a_meal_outlives_the_window_that_ate_it(self):
+        # Closing a full window used to empty it. That made closing and
+        # reopening the way to eat twice, which is the whole reason the meal
+        # is written against the class.
         proc = fake_proc(pid=4242)
         try:
             book = creatures.Store(self.path, proc=proc)
-            book.consume(4242, 30, now=1000.0)
+            book.consume(window("0x1", "foot", pid=4242), 30, now=1000.0)
             shutil.rmtree(os.path.join(proc, "4242"))
             book.save()
-            self.assertEqual(book.appetite, {},
-                             "a dead window keeps nothing")
+            reopened = creatures.Store(self.path, proc=proc)
+            self.assertEqual(reopened.eaten(creatures.sleeping_window("foot")),
+                             30)
         finally:
             shutil.rmtree(proc, ignore_errors=True)
+
+    def test_the_hours_are_banked_and_the_bookkeeping_is_not(self):
+        proc = fake_proc(pid=4242, age_seconds=3600.0 * 3)
+        try:
+            book = creatures.Store(self.path, proc=proc)
+            live = window("0x1", "foot", pid=4242)
+            self.assertTrue(book.bank([live]))
+            self.assertAlmostEqual(book.record(live)["lived"], 3600.0 * 3,
+                                   places=0)
+            # Banked twice is not counted twice.
+            self.assertFalse(book.bank([live]))
+            self.assertAlmostEqual(book.record(live)["lived"], 3600.0 * 3,
+                                   places=0)
+            # The note against the pid dies with the pid; the hours do not.
+            shutil.rmtree(os.path.join(proc, "4242"))
+            book.save()
+            self.assertEqual(book.banked, {}, "a dead window keeps no note")
+            asleep = creatures.sleeping_window("foot")
+            self.assertAlmostEqual(book.record(asleep)["lived"], 3600.0 * 3,
+                                   places=0)
+            self.assertEqual(battles.appetite(book.record(asleep)["lived"]),
+                             battles.appetite(3600.0 * 3),
+                             "and the appetite they bought is still there")
+        finally:
+            shutil.rmtree(proc, ignore_errors=True)
+
+    def test_a_second_window_buys_no_second_hour(self):
+        # Two windows of one class are one creature, and one creature is open
+        # for one hour an hour however many bodies it has.
+        proc = fake_proc(pid=4242, age_seconds=3600.0 * 2)
+        try:
+            fake_process(proc, 5151, age_seconds=3600.0 * 2)
+            book = creatures.Store(self.path, proc=proc)
+            live = [window("0x1", "foot", pid=4242),
+                    window("0x2", "foot", pid=5151)]
+            book.bank(live)
+            self.assertAlmostEqual(book.record(live[0])["lived"], 3600.0 * 2,
+                                   places=0)
+        finally:
+            shutil.rmtree(proc, ignore_errors=True)
+
+    def test_nothing_accrues_while_it_sleeps(self):
+        book = creatures.Store(self.path)
+        asleep = creatures.sleeping_window("kitty")
+        book.touch([asleep])
+        before = book.record(asleep)["lived"]
+        book.bank([asleep])
+        self.assertEqual(book.record(asleep)["lived"], before)
+        self.assertEqual(before, 0.0, "open time is the price of an appetite")
 
     def test_an_instance_key_carries_the_start_time(self):
         proc = fake_proc(pid=4242)
@@ -2591,13 +2646,29 @@ class FeedingFromThePanel(unittest.TestCase):
                          battles.xp_for_nourish(34))
         self.assertEqual(self.book.record(self.window)["meals"], 1)
 
-    def test_eating_uses_up_the_window_s_appetite(self):
-        before = battles.hunger(creatures.window_uptime(4242, self.proc),
-                                self.book.eaten(4242))
+    def room(self):
+        return creatures.stomach([self.window], self.book, self.proc)["hunger"]
+
+    def age(self, hours):
+        """Leave the window open a while longer. Open time is the only thing
+        that buys an appetite, so it is the only thing that lets a creature
+        that has eaten eat again."""
+        record = self.book.record(self.window)
+        entry = self.book.species.setdefault(record["key"], {})
+        entry["lived"] = record["lived"] + hours * 3600.0
+        self.book.save()
+
+    def test_eating_uses_up_the_creature_s_appetite(self):
+        before = self.room()
         self.feed()
-        after = battles.hunger(creatures.window_uptime(4242, self.proc),
-                               self.book.eaten(4242))
-        self.assertEqual(before - after, 34)
+        self.assertEqual(before - self.room(), 34)
+
+    def test_the_appetite_is_the_one_it_banked_not_this_window_s_age(self):
+        # The window is eight hours old but its creature has been open for
+        # days, and the days are what it eats on - which is what makes a
+        # reopened window the creature it was yesterday.
+        self.age(48)
+        self.assertEqual(self.room(), battles.APPETITE_CAP)
 
     def test_a_full_window_is_refused_and_nothing_is_taken(self):
         while self.feed()["ok"]:
@@ -2611,10 +2682,10 @@ class FeedingFromThePanel(unittest.TestCase):
 
     def test_a_bare_shelf_is_refused_without_costing_an_appetite(self):
         self.larder.shelf["servings"] = 0
-        eaten = self.book.eaten(4242)
+        eaten = self.book.eaten(self.window)
         refusal = self.feed()
         self.assertFalse(refusal["ok"])
-        self.assertEqual(self.book.eaten(4242), eaten)
+        self.assertEqual(self.book.eaten(self.window), eaten)
 
     def test_a_window_that_cannot_be_identified_cannot_be_fed(self):
         result = creatures.feed(window("0x1", "foot"), "staple", self.book,
@@ -2631,8 +2702,8 @@ class FeedingFromThePanel(unittest.TestCase):
         self.assertTrue(result["ok"], result["message"])
         after = creatures.stomach(clients, self.book, self.proc)["hunger"]
         self.assertEqual(before - after, 34)
-        self.assertEqual(self.book.eaten(4242), 34,
-                         "written against the window with the room for it")
+        self.assertEqual(self.book.eaten(clients[0]), 34,
+                         "written against the creature, not the window")
 
     def test_a_new_window_eats_on_its_elder_s_appetite(self):
         # A minute-old window is full before it starts. Opened beside an
@@ -2658,10 +2729,11 @@ class FeedingFromThePanel(unittest.TestCase):
                              now=1000.0, proc=self.proc,
                              clients=clients)["ok"]:
             pass
-        eaten = self.book.eaten(4242) + self.book.eaten(5151)
+        eaten = self.book.eaten(clients[0])
         self.assertLessEqual(eaten, room, "one appetite between them")
         self.assertGreater(eaten, battles.appetite(60.0),
-                           "and it is the elder's appetite, not the newcomer's")
+                           "and it is the creature's appetite, not the "
+                           "newcomer's")
 
     def test_both_ways_in_hand_the_window_list_to_the_meal(self):
         # The daemon and the CLI both feed, and the CLI feeds with the daemon
@@ -2684,7 +2756,7 @@ class FeedingFromThePanel(unittest.TestCase):
         # way a real one ages: this is the only thing that lets it keep
         # eating, which is the rule under test.
         for round_number in range(60):
-            self.book.appetite = {}
+            self.age(12)
             result = self.feed()
             if not result["ok"]:
                 break
@@ -2701,6 +2773,84 @@ class FeedingFromThePanel(unittest.TestCase):
         for forbidden in ("subprocess", "dispatch", "hyprctl", "socket",
                           "os.kill", "unlink", "rmtree"):
             self.assertNotIn(forbidden, source, forbidden)
+
+
+class AnAppetiteThatOutlivesTheWindow(unittest.TestCase):
+    """What a creature has earned to eat with, and eaten, across a restart.
+
+    Appetite used to be one process's: it died with the window, which meant a
+    creature you had just reopened was a hatchling again, and - the other way
+    round - that closing a full window and opening it again was a second
+    helping. Both halves are the class's now, and both are written down.
+    """
+
+    def setUp(self):
+        self.proc = fake_proc(pid=4242, age_seconds=3600.0 * 8)
+        self.directory = tempfile.mkdtemp()
+        self.path = os.path.join(self.directory, "creatures.json")
+        self.book = creatures.Store(self.path, proc=self.proc)
+        self.larder = Eating.FakeLarder(servings=40)
+        self.window = window("0x1", "foot", pid=4242)
+
+    def tearDown(self):
+        shutil.rmtree(self.proc, ignore_errors=True)
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def reopen(self):
+        """Shut the window, restart the machine, open one of it a minute ago.
+
+        A fresh Store, because after a restart the file is all there is: no
+        pid, no uptime and nothing in memory carries over.
+        """
+        self.book.touch([self.window])          # the hours it was open
+        shutil.rmtree(os.path.join(self.proc, "4242"))
+        fake_process(self.proc, 5151, age_seconds=60.0)
+        self.book = creatures.Store(self.path, proc=self.proc)
+        return window("0x2", "foot", pid=5151)
+
+    def feed(self, one, clients=None):
+        return creatures.feed(one, "staple", self.book, self.larder,
+                              now=1000.0, proc=self.proc,
+                              clients=clients or [one])
+
+    def test_a_reopened_window_keeps_the_appetite_it_earned(self):
+        was = creatures.stomach([self.window], self.book, self.proc)
+        fresh = self.reopen()
+        now = creatures.stomach([fresh], self.book, self.proc)
+        self.assertEqual(now["appetite"], was["appetite"])
+        self.assertEqual(now["hunger"], was["hunger"])
+        self.assertEqual(now["uptime"], 60.0, "the window really is new")
+        # Which is the point: a minute-old window could never eat a staple.
+        self.assertTrue(self.feed(fresh)["ok"])
+
+    def test_closing_it_is_not_a_second_helping(self):
+        while self.feed(self.window)["ok"]:
+            pass
+        taken = len(self.larder.taken)
+        refusal = self.feed(self.reopen())
+        self.assertFalse(refusal["ok"])
+        self.assertIn("full", refusal["message"])
+        self.assertEqual(len(self.larder.taken), taken,
+                         "reopening it fed it nothing")
+
+    def test_it_is_hungry_again_once_it_has_been_open_a_while_longer(self):
+        while self.feed(self.window)["ok"]:
+            pass
+        # Appetite is a bucket, not a lifetime allowance: more open time
+        # fills it again, which is the only thing that ever does.
+        record = self.book.record(self.window)
+        self.book.species[record["key"]]["lived"] = record["lived"] + 3600 * 12
+        self.book.save()
+        self.assertTrue(self.feed(self.window)["ok"])
+
+    def test_a_creature_that_has_never_been_open_long_is_still_a_hatchling(self):
+        # Nothing here hands anybody an appetite they did not buy.
+        fake_process(self.proc, 6262, age_seconds=60.0)
+        young = window("0x9", "mpv", pid=6262)
+        self.book.touch([young])
+        room = creatures.stomach([young], self.book, self.proc)
+        self.assertEqual(room["appetite"], battles.APPETITE_BASE)
+        self.assertFalse(self.feed(young)["ok"])
 
 
 class TheCensus(unittest.TestCase):
@@ -2867,13 +3017,28 @@ class SleepingWindows(unittest.TestCase):
         self.assertEqual(len(kitty["moves"]), battles.CARRIED_MOVES)
         self.assertTrue(kitty["learnset"])
 
-    def test_it_has_no_appetite_because_it_has_no_window(self):
+    def test_it_keeps_the_appetite_it_banked_and_still_cannot_eat(self):
+        # An appetite is bought with open time, and a shut window has already
+        # paid: what it cannot do is eat, because there is no window there to
+        # put anything in front of.
         for row in self.asleep():
-            self.assertEqual(row["appetite"], 0)
-            self.assertEqual(row["hunger"], 0)
+            self.assertEqual(row["uptime"], 0, "nothing of it is open")
             self.assertFalse(row["canFeed"])
             self.assertTrue(row["sleeping"])
             self.assertFalse(row["canEvolveNow"], "nothing happens while shut")
+        self.book.species["kitty"]["lived"] = 3600.0 * 6
+        kitty = next(row for row in self.asleep() if row["key"] == "kitty")
+        self.assertEqual(kitty["appetite"], battles.appetite(3600.0 * 6))
+        self.assertEqual(kitty["hunger"], kitty["appetite"],
+                         "it has eaten nothing")
+        self.assertFalse(kitty["canFeed"])
+
+    def test_nothing_it_is_owed_grows_while_it_sleeps(self):
+        self.book.species["kitty"]["lived"] = 3600.0
+        before = next(row for row in self.asleep() if row["key"] == "kitty")
+        self.book.touch([self.open_window])
+        after = next(row for row in self.asleep() if row["key"] == "kitty")
+        self.assertEqual(after["appetite"], before["appetite"])
 
     def test_the_most_recently_open_is_first(self):
         rows = self.asleep()
@@ -2955,7 +3120,8 @@ class TheRoster(unittest.TestCase):
         rows = self.rows([window("0x1", "foot", pid=4242),
                           window("0x2", "firefox")])
         self.assertEqual(rows[0]["address"], "0x1")
-        self.book.consume(4242, battles.appetite(3600 * 4) - 1, now=1000.0)
+        self.book.consume(window("0x1", "foot", pid=4242),
+                          battles.appetite(3600 * 4) - 1, now=1000.0)
         rows = self.rows([window("0x1", "foot", pid=4242),
                           window("0x2", "firefox")])
         self.assertEqual(rows[0]["address"], "0x2",
@@ -2984,10 +3150,10 @@ class TheRoster(unittest.TestCase):
         self.assertEqual(together["appetite"], alone["appetite"],
                          "a second window buys no second stomach")
         self.assertEqual(together["uptime"], alone["uptime"],
-                         "and the appetite is the elder's, which bought it")
+                         "and the age shown is the elder's")
         # What either window eats, the creature has eaten: the record the
         # meal pays into is the class's, so the cap has to be too.
-        self.book.consume(5151, 12, now=1000.0)
+        self.book.consume(clients[1], 12, now=1000.0)
         after = self.rows(clients)[0]
         self.assertEqual(after["eaten"], 12)
         self.assertEqual(after["hunger"], together["hunger"] - 12)

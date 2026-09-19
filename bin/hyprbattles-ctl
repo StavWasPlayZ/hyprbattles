@@ -27,16 +27,17 @@
                                     # record and an appetite
     hyprbattles-ctl roster --json   # the same, as the bar panel reads it
     hyprbattles-ctl sleeping        # the creatures whose windows are shut. They
-                                    # keep their levels and their moves; they have
-                                    # no appetite, because they have no window.
+                                    # keep their levels, their moves and the
+                                    # appetite their windows earned; what they
+                                    # have not got is a window to eat with.
     hyprbattles-ctl feed <addr> <shelf>
                                     # feed one creature one portion, through any
                                     # of its windows. The machine has to have the
                                     # food spare and the creature has to have the
-                                    # appetite for it - its eldest window's age
-                                    # buys that, and every window of the class
-                                    # eats against it. Levels are earned this
-                                    # way, and enough of them evolve the creature.
+                                    # appetite for it - the hours its windows have
+                                    # been open buy that, and they outlast any one
+                                    # window. Levels are earned this way, and
+                                    # enough of them evolve the creature.
 
     hyprbattles-ctl assets          # which sound is coming from which file, and
                                     # why. The thing to run when your own file is
@@ -405,8 +406,12 @@ def main(argv):
             return 0
         for row in rows:
             stars = "*" * max(0, int(row.get("stage", 1)) - 1)
-            print("%-14s %-6s L%-3d %-2s %2dW %2dL  %s"
+            # The appetite goes in here too: it was bought while the window
+            # was open and it is waiting for the window to come back, which
+            # is a thing worth being able to see from the shell.
+            print("%-14s %-6s L%-3d %-2s %4d/%-4d appetite  %2dW %2dL  %s"
                   % (row["name"], row["type"], row["level"], stars,
+                     row["hunger"], row["appetite"],
                      row["wins"], row["losses"], row["key"]))
         return 0
 

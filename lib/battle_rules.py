@@ -443,33 +443,50 @@ def xp_for_result(result, foe_level):
 
 # Hunger
 #
-# How much a window can eat is bought with how long it has been open, and
-# nothing else. A window opened a minute ago is a hatchling with no appetite;
-# one that has been up since this morning can take a proper meal. Uptime comes
-# off /proc rather than out of a file this plugin wrote, so closing the panel,
-# restarting the daemon or editing the ledger cannot fake it - and reopening
-# the window resets the appetite honestly, because that really is a new window.
+# How much a creature can eat is bought with how long its windows have been
+# open, and nothing else. One opened a minute ago is a hatchling with no
+# appetite; one that has been up since this morning can take a proper meal.
+#
+# It is a bucket, not a lifetime allowance. Open time fills it at
+# APPETITE_PER_HOUR and it holds APPETITE_CAP at the very most; eating drains
+# it. So a creature that has eaten its fill is hungry again after a few more
+# hours of being open, and one that has been left open for a week is not owed
+# a week's worth of meals - only the bucketful it can hold.
+#
+# The hours are the creature's, not one process's: they are banked as its
+# windows age (lib/creatures.py) and survive the window closing and the
+# machine restarting, or the way to feed something twice would be to close it
+# and open it again. Nothing accrues while it sleeps: open time is the price,
+# and a shut window is not paying it.
 APPETITE_BASE = 20
 APPETITE_PER_HOUR = 18
 APPETITE_CAP = 200
 
 
-def appetite(uptime_seconds):
-    """How much nourishment a window this old can hold, all told."""
+def appetite(lived_seconds):
+    """How big a stomach this much open time has bought: what it could hold
+    if it had eaten nothing at all."""
     try:
-        hours = max(0.0, float(uptime_seconds)) / 3600.0
+        hours = max(0.0, float(lived_seconds)) / 3600.0
     except (TypeError, ValueError):
         hours = 0.0
     return int(min(APPETITE_CAP, APPETITE_BASE + APPETITE_PER_HOUR * hours))
 
 
-def hunger(uptime_seconds, eaten):
-    """How much it can still eat right now: appetite less what it has had."""
+def hunger(lived_seconds, eaten):
+    """How much it can still eat right now: everything its open time has ever
+    poured in, less everything it has ever eaten, and never more than the
+    stomach holds."""
+    try:
+        hours = max(0.0, float(lived_seconds)) / 3600.0
+    except (TypeError, ValueError):
+        hours = 0.0
     try:
         taken = max(0, int(eaten))
     except (TypeError, ValueError):
         taken = 0
-    return max(0, appetite(uptime_seconds) - taken)
+    poured = APPETITE_BASE + APPETITE_PER_HOUR * hours - taken
+    return max(0, int(min(APPETITE_CAP, poured)))
 
 
 def creature(window, record=None):
