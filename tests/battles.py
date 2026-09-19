@@ -1272,21 +1272,6 @@ class WithoutTheGamepadPlugin(unittest.TestCase):
         self.assertEqual(bd.LAYOUT_COLLISION_EVENT,
                          "me.schafman.omarchy.plugin.hyprscroll2d:collision")
 
-    def test_the_name_that_layout_used_to_post_is_still_heard(self):
-        # An event name is a plugin id, so that layout renaming itself renamed
-        # the event. An install from before the rename still posts the old
-        # name, and a plugin with no part in the rename should not go quiet
-        # over it.
-        self.assertEqual(bd.LEGACY_LAYOUT_COLLISION_EVENT,
-                         "io.github.kirollosatef.hyprscroll2d:collision")
-        with open(os.path.join(ROOT, "bin", "battles")) as handle:
-            source = handle.read()
-        start = source.index("    def read_events(self):")
-        body = source[start:source.index("    def read_pad", start)]
-        for event in ("PAD_COLLISION_EVENT", "LAYOUT_COLLISION_EVENT",
-                      "LEGACY_LAYOUT_COLLISION_EVENT"):
-            self.assertIn(event, body, event)
-
     def test_a_failed_grab_is_not_an_error(self):
         # No gamepad daemon listening: sendto fails, and that is a normal
         # state rather than something to complain about.

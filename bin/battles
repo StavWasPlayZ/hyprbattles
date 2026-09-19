@@ -77,13 +77,6 @@ ASSETS = battle_assets.GENERATED
 # requirement: `battles-ctl move` sees the same swap on any layout, by looking
 # at the window list either side of the move.
 LAYOUT_COLLISION_EVENT = "me.schafman.omarchy.plugin.hyprscroll2d:collision"
-# The name that layout posted before it took an id of its own. An event name
-# is a plugin id, so renaming one renames the other, and an install made
-# before the rename - or one pinned to it - still announces the old name.
-# Listening for both costs one string comparison and saves a plugin that has
-# nothing to do with the rename from going quiet on somebody else's release
-# schedule.
-LEGACY_LAYOUT_COLLISION_EVENT = "io.github.kirollosatef.hyprscroll2d:collision"
 # And the gamepad plugin's narrower version of the same thing, posted only
 # when the pad caused it. Listened for as well, so a pad-driven battle knows
 # it is pad-driven; the two are de-duplicated below, because for a d-pad move
@@ -875,8 +868,7 @@ class Daemon:
             if name != "custom":
                 continue
             for event, source in ((PAD_COLLISION_EVENT, "pad"),
-                                  (LAYOUT_COLLISION_EVENT, "layout"),
-                                  (LEGACY_LAYOUT_COLLISION_EVENT, "layout")):
+                                  (LAYOUT_COLLISION_EVENT, "layout")):
                 if not data.startswith(event + ","):
                     continue
                 # A surprise in the payload must not cost the event loop.
