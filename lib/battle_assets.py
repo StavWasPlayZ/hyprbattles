@@ -44,8 +44,8 @@ DEFAULT_MODE = "auto"
 # Every name the daemon ever asks for, in the order `battles-ctl assets`
 # prints them: the music first, then the one-shots.
 SOUNDS = ("battle-theme.wav", "battle-select.wav", "battle-hit.wav",
-          "battle-heal.wav", "battle-levelup.wav", "battle-victory.wav",
-          "battle-defeat.wav")
+          "battle-heal.wav", "battle-evolve.wav", "battle-levelup.wav",
+          "battle-victory.wav", "battle-defeat.wav")
 
 
 def custom_dir(environ=None):

@@ -25,6 +25,7 @@ Seven files come out:
     assets/battle-select.wav    the blip under every menu press
     assets/battle-levelup.wav   the rising sting when the challenger wins
     assets/battle-heal.wav      eating something out of the larder
+    assets/battle-evolve.wav    the long shimmer while a creature evolves
     assets/battle-victory.wav   a short fanfare for a win
     assets/battle-defeat.wav    the same shape, and considerably sadder
 
@@ -255,6 +256,35 @@ def build_heal():
     return buffer
 
 
+# ------------------------------------------------------------- the evolve
+
+def build_evolve():
+    """Evolving: one pitch class climbing octave by octave, faster each time.
+
+    It has to run under the whole animation rather than punctuate it, so it is
+    built as an accelerating ladder instead of a phrase - the shape a thing
+    makes when it is winding up. The level-up sting lands on top of it at the
+    end, which is what turns the wind-up into an arrival.
+    """
+    steps = [("A3", 0.16), ("A4", 0.15), ("E4", 0.14), ("A4", 0.13),
+             ("E5", 0.12), ("A5", 0.11), ("E5", 0.10), ("A5", 0.09),
+             ("C#6", 0.08), ("E6", 0.08), ("A6", 0.07), ("E6", 0.07),
+             ("A6", 0.06), ("C#7", 0.06), ("E7", 0.06), ("A7", 0.20)]
+    total = int(RATE * (sum(length for _, length in steps) + 0.03))
+    buffer = [0.0] * total
+    cursor = 0.0
+    for index, (note, length) in enumerate(steps):
+        # The duty narrows as it climbs, so the ladder thins out as well as
+        # rising: the same note an octave up would otherwise only get louder.
+        pulse(buffer, int(RATE * cursor), int(RATE * length), frequency(note),
+              0.30, duty=0.5 if index < 4 else (0.25 if index < 10 else 0.125))
+        cursor += length
+    # A held low triangle under the whole thing, so the climb has a floor to
+    # climb away from.
+    triangle(buffer, 0, int(RATE * cursor), frequency("A2"), 0.14)
+    return buffer
+
+
 # ------------------------------------------------------------- the fanfares
 
 # Both fanfares are written here rather than borrowed. The win climbs an A
@@ -481,6 +511,8 @@ def main():
     levelup = write(os.path.join(ASSETS, "battle-levelup.wav"), build_levelup(),
                     peak=0.70)
     heal = write(os.path.join(ASSETS, "battle-heal.wav"), build_heal())
+    evolve = write(os.path.join(ASSETS, "battle-evolve.wav"), build_evolve(),
+                   peak=0.70)
     victory = write(os.path.join(ASSETS, "battle-victory.wav"),
                     build_fanfare(VICTORY, VICTORY_BASS, 0.105, True,
                                   crash=True))
@@ -491,6 +523,7 @@ def main():
     print("battle-select.wav  %5.1fs" % select)
     print("battle-levelup.wav %5.1fs" % levelup)
     print("battle-heal.wav    %5.1fs" % heal)
+    print("battle-evolve.wav  %5.1fs" % evolve)
     print("battle-victory.wav %5.1fs" % victory)
     print("battle-defeat.wav  %5.1fs" % defeat)
     return 0

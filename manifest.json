@@ -7,10 +7,18 @@
   "license": "MIT",
   "description": "Throw a window at another window and settle it in a turn-based fight",
   "kinds": [
-    "service"
+    "service",
+    "bar-widget"
   ],
   "keepLoaded": true,
   "entryPoints": {
-    "service": "Service.qml"
+    "service": "Service.qml",
+    "barWidget": "Roster.qml"
+  },
+  "barWidget": {
+    "displayName": "Battles",
+    "description": "Switch window battles on or off, see every open window as a creature, and feed it what the machine has spare",
+    "category": "Compositor",
+    "allowMultiple": false
   }
 }

@@ -164,11 +164,13 @@ always meet as the same two creatures.
 
 | Part of the creature | Comes from |
 | --- | --- |
-| Name | The window's initial class, uppercased, cut to 12 characters. `org.gnome.Nautilus` fights as `NAUTILUS`. |
+| Name | The window's initial class, uppercased, cut to 12 characters. `org.gnome.Nautilus` fights as `NAUTILUS`, and an evolved one earns a word in front of it. |
 | Type | The class, matched against a table of the usual suspects. |
-| Level | The window's area on screen. Screen real estate is the only currency a window has. |
-| HP, attack, defense, speed | The window's address, which is stable for as long as the window is. |
-| Its four moves | The address again: two of its own type, two borrowed. |
+| Level | What the class has earned: meals and battles, remembered across restarts. Everything starts at 5. See [CREATURES.md](CREATURES.md). |
+| Stage | The level: 1, then 2 at level 12, then 3 at level 25. It is worth a name, a few points of attack and - the part that matters - better moves. |
+| HP, attack, defense, speed | The level and the stage, plus a small fixed spread off the window's address so two creatures of the same level are not the same creature. |
+| A sturdiness bonus | The window's area on screen, worth a little HP and defense and nothing else. It used to be the whole level, which was unfair to anyone whose windows cannot be big. |
+| Its four moves | The address, and the stage: a stage-1 creature cannot reach its type's strongest move, and a stage-3 one knows all three. |
 
 ### Types
 
@@ -318,12 +320,16 @@ worth knowing about:
 ## The switch
 
 **Trigger -> Toggle -> Window Battles** in the Omarchy menu turns the whole
-feature on and off, with a tick on the row while it is on.
-`bin/battles-ctl on|off|toggle` does the same from a script.
+feature on and off, with a tick on the row while it is on. The first thing in
+the bar panel is the same switch, and `bin/battles-ctl on|off|toggle` is the
+same switch from a script. All three read and write one file, so none of them
+can disagree.
 
-A toggle rather than a bar icon, because that is what this is: a setting you
-flip now and then, not a thing to watch. A bar icon would spend all day
-reporting a state that changes twice a month.
+The bar icon came later, and it is not there to report the switch: it is the
+way into the roster, where the creatures and the food are. It stays the bar's
+own colour whether battles are on or off - grey while off - and lights a small
+red dot only when a creature is one meal away from evolving. See
+[CREATURES.md](CREATURES.md).
 
 Off is checked before the roll, so a switched-off battle costs one `stat()`
 and nothing else - no compositor round trip, no dice. A battle already on

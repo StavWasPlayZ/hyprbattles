@@ -39,6 +39,12 @@ Item {
         Qt.resolvedUrl("bin/battles-ctl").toString().replace(/^file:\/\//, ""))
 
     readonly property bool active: state.active === true
+    // Two things can be on this screen, and only ever one at a time: a
+    // battle, and a creature evolving. An evolution has no turns, no menus
+    // and nothing to play - it is three beats of animation over the window
+    // that earned it - so it borrows the arena, the name plate and the text
+    // box and leaves the rest of the scene out.
+    readonly property bool evolving: String(state.scene || "") === "evolve"
     readonly property var player: state.player || ({})
     readonly property var foe: state.foe || ({})
     readonly property string monitor: String(state.monitor || "")
@@ -338,7 +344,7 @@ Item {
                     fainted: root.effect === "faint-foe" || Number(root.foe.hp || 1) <= 0
                     pulse: root.seq
                     entryFrom: keys.width * 0.5
-                    visible: root.active
+                    visible: root.active && !root.evolving
 
                     x: keys.width * 0.60
                     y: keys.height * 0.09
@@ -360,10 +366,58 @@ Item {
                     entryFrom: -keys.width * 0.5
                     visible: root.active
 
-                    x: keys.width * 0.10
-                    y: keys.height * 0.34
+                    x: root.evolving ? keys.width * 0.34 : keys.width * 0.10
+                    y: root.evolving ? keys.height * 0.11 : keys.height * 0.34
                     width: keys.width * 0.32
-                    height: keys.height * 0.30
+                    height: root.evolving ? keys.height * 0.34 : keys.height * 0.30
+
+                    // It walks to the middle of the arena rather than cutting
+                    // there: the animation is the whole content of this
+                    // scene, so every part of it is worth moving.
+                    Behavior on x { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+                    Behavior on y { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+                    Behavior on height { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+                }
+
+                // The evolution itself: a white flash over the whole arena
+                // that quickens as it goes, which is what the shows this is
+                // imitating do with the same three seconds. It sits over the
+                // fighters and under the text box, so the window behind is
+                // still visible through every dip.
+                Rectangle {
+                    id: shimmer
+
+                    anchors.fill: parent
+                    color: Color.foreground
+                    opacity: 0
+                    visible: root.evolving && opacity > 0
+
+                    readonly property bool shifting: root.effect === "evolve-shift"
+
+                    SequentialAnimation {
+                        running: shimmer.shifting
+                        loops: Animation.Infinite
+
+                        NumberAnimation { target: shimmer; property: "opacity"; to: 0.85; duration: 260 }
+                        NumberAnimation { target: shimmer; property: "opacity"; to: 0.10; duration: 220 }
+                        NumberAnimation { target: shimmer; property: "opacity"; to: 0.90; duration: 170 }
+                        NumberAnimation { target: shimmer; property: "opacity"; to: 0.10; duration: 140 }
+                        NumberAnimation { target: shimmer; property: "opacity"; to: 0.95; duration: 110 }
+                        NumberAnimation { target: shimmer; property: "opacity"; to: 0.15; duration: 90 }
+                    }
+
+                    // The flash on arrival: one long fade out of white, so the
+                    // evolved name is read through it rather than after it.
+                    NumberAnimation {
+                        target: shimmer
+                        property: "opacity"
+                        from: 1.0
+                        to: 0.0
+                        duration: 900
+                        running: root.evolving && root.effect === "evolve-done"
+                    }
+
+                    onShiftingChanged: if (!shifting && root.effect !== "evolve-done") opacity = 0
                 }
 
                 // -------------------------------------------------- HP boxes
@@ -374,7 +428,8 @@ Item {
                     unit: panel.unit
                     frameWidth: panel.frame
                     showNumbers: false
-                    visible: root.active && String(root.foe.name || "") !== ""
+                    visible: root.active && !root.evolving
+                             && String(root.foe.name || "") !== ""
 
                     x: keys.width * 0.06
                     y: keys.height * 0.10
@@ -386,12 +441,12 @@ Item {
                     tint: root.typeColor(root.player.type)
                     unit: panel.unit
                     frameWidth: panel.frame
-                    showNumbers: true
+                    showNumbers: !root.evolving
                     visible: root.active && String(root.player.name || "") !== ""
 
-                    x: keys.width * 0.58
-                    y: keys.height * 0.46
-                    width: keys.width * 0.33
+                    x: root.evolving ? keys.width * 0.335 : keys.width * 0.58
+                    y: root.evolving ? keys.height * 0.50 : keys.height * 0.46
+                    width: root.evolving ? keys.width * 0.33 : keys.width * 0.33
                 }
 
                 // -------------------------------------------------- text box
@@ -458,7 +513,11 @@ Item {
                     PixelText {
                         id: more
 
-                        visible: root.active && !root.choosing && root.message !== ""
+                        // Nothing to advance during an evolution: it runs
+                        // itself, and the only key that does anything is the
+                        // one that skips it.
+                        visible: root.active && !root.choosing && !root.evolving
+                                 && root.message !== ""
                             && line.typed >= root.message.length
                         text: ">"
                         pixel: panel.unit
@@ -765,7 +824,15 @@ Item {
                     opacity: 0.5
 
                     Repeater {
-                        model: root.padInput
+                        // There is nothing to play during an evolution, so
+                        // the only control worth naming is the one that
+                        // skips it - and it skips the picture, never the
+                        // level, which was written down before this began.
+                        model: root.evolving
+                            ? (root.padInput
+                                ? [ { key: "START", label: "SKIP" } ]
+                                : [ { key: "ESC", label: "SKIP" } ])
+                            : (root.padInput
                             ? [
                                 { key: "D-PAD", label: "PICK" },
                                 { key: "A", label: "OK" },
@@ -777,7 +844,7 @@ Item {
                                 { key: "Z", label: "OK" },
                                 { key: "X", label: root.menuOpen ? "BACK" : "NEXT" },
                                 { key: "ESC", label: "LEAVE" }
-                            ]
+                            ])
 
                         Row {
                             id: hint

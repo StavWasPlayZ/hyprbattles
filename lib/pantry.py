@@ -93,6 +93,32 @@ def count_zombies(proc="/proc"):
     return total
 
 
+def read_loadavg(path="/proc/loadavg"):
+    """The one-minute load average. A counter, like everything else here."""
+    try:
+        with open(path) as handle:
+            return float(handle.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return 0.0
+
+
+def idle_percent(loadavg="/proc/loadavg"):
+    """Roughly how much of the machine is doing nothing, as a percentage.
+
+    Load against core count is a crude reading and deliberately so: it needs
+    no sampling window, no remembered previous value and no second file, and
+    the number it gives is the one a person would say out loud - "the machine
+    is about 80% idle". Over-loaded machines floor at zero rather than going
+    negative, which is the correct amount of spare capacity to serve.
+    """
+    try:
+        cores = max(1, os.cpu_count() or 1)
+    except Exception:
+        cores = 1
+    busy = min(1.0, read_loadavg(loadavg) / float(cores))
+    return max(0.0, (1.0 - busy) * 100.0)
+
+
 def used_bytes(path="/tmp"):
     """How much is sitting in a filesystem, from statvfs. No directory is
     walked and no file is opened, so nothing private is touched."""
@@ -178,6 +204,20 @@ SHELVES = (
         "reading": lambda roots: float(count_zombies(roots["proc"])),
     },
     {
+        "key": "vitamin",
+        "name": "IDLE CYCLES",
+        "note": "Cycles nobody is using. Light, clean, and good for the legs.",
+        "unit": "%",
+        "portion": 10.0,
+        "kind": "plain",
+        "heal": 0.10,
+        "nourish": 14,
+        # Spare cycles make a creature quick, which is the one stat no other
+        # shelf hands out.
+        "boon": {"stat": "speed", "fraction": 0.12},
+        "reading": lambda roots: idle_percent(roots["loadavg"]),
+    },
+    {
         "key": "scraps",
         "name": "TMP SCRAPS",
         "note": "Whatever the last hour left in /tmp. Barely a mouthful.",
@@ -192,6 +232,7 @@ SHELVES = (
 
 DEFAULT_ROOTS = {
     "meminfo": "/proc/meminfo",
+    "loadavg": "/proc/loadavg",
     "entropy": "/proc/sys/kernel/random/entropy_avail",
     "proc": "/proc",
     "tmp": "/tmp",

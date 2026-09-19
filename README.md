@@ -18,6 +18,24 @@ consumed, and a ledger so you cannot feed the same 512 MiB to a creature
 twice. See [`docs/FOOD.md`](docs/FOOD.md) - open a browser and your creatures
 go hungry.
 
+Windows remember. A creature is its window class, so the level your terminal
+earned this morning is still its level tomorrow: meals and battles buy
+experience, experience buys levels, and at level 12 and 25 it **evolves** -
+a new name, better moves, and eight seconds of the overlay saying so. How much
+a window can eat is bought with how long it has been open, so an old window
+has an appetite and a fresh one does not. See
+[`docs/CREATURES.md`](docs/CREATURES.md).
+
+Levels teach it things, too. A creature knows more moves than the four it
+carries - its own type's arrive with evolution, the rest are borrowed one at a
+time as it levels - and which four it fights with is yours to pick, as long as
+two of them stay its own type.
+
+There is a bar icon for all of it: the switch, one card per open window with
+what it has won and how hungry it is, each window's own page, the pantry to
+feed it from, and - at the bottom - the ones whose windows are shut, which
+keep their levels and their moves and wait.
+
 It is a joke that plays straight. The type chart is real, the damage formula
 is real, the loser genuinely gets moved. What it cannot do is cost you
 anything: no window is ever closed, killed, floated, resized or sent
@@ -32,13 +50,16 @@ where you wanted it, which is also the worst outcome of not having a battle.
 | [`bin/battles-ctl`](bin/battles-ctl) | Move a window, read the state, switch battles on or off, or force one, from anywhere. |
 | [`lib/window_moves.py`](lib/window_moves.py) | Which command moves a window one cell, per layout, and how to tell a swap from a step into an empty cell. |
 | [`lib/battle_rules.py`](lib/battle_rules.py) | The rules: creatures, types, damage, the turn loop. No I/O in it at all. |
-| [`lib/pantry.py`](lib/pantry.py) | The food: read-only readings of free memory, cache, swap, entropy and zombies, and the ledger that keeps them honest. |
+| [`lib/pantry.py`](lib/pantry.py) | The food: read-only readings of free memory, cache, swap, entropy, idle cycles and zombies, and the ledger that keeps them honest. |
+| [`lib/creatures.py`](lib/creatures.py) | What a window class has earned, what one window has eaten, and how old it is. The only thing here that writes. |
+| [`Roster.qml`](Roster.qml) | The bar panel: the switch, the creatures, and the food to feed them. |
 | [`Battle.qml`](Battle.qml) | The battle screen. Draws the snapshot the daemon publishes, and nothing else. |
 | [`PixelText.qml`](PixelText.qml) | An original 5x7 pixel font, drawn square by square onto a Canvas. |
 
 Full rules, the trigger path, the escape hatches and how to force one:
 [`docs/BATTLES.md`](docs/BATTLES.md). The pantry and its ledger:
-[`docs/FOOD.md`](docs/FOOD.md).
+[`docs/FOOD.md`](docs/FOOD.md). Levels, evolution, hunger and the bar panel:
+[`docs/CREATURES.md`](docs/CREATURES.md).
 
 ## What it needs
 
@@ -111,13 +132,24 @@ Then add the toggle to `~/.config/omarchy/extensions/omarchy-menu.jsonc`:
 ```
 
 It lands under **Trigger -> Toggle**, beside the other switches, with a tick
-while battles are on. A toggle is the right shape for this: it is a setting
-you flip now and then, not a thing to watch, and a bar icon would spend all
-day telling you something you already know.
+while battles are on.
+
+And put the bar icon on the bar - the switch, the roster and the food all live
+behind it:
+
+```bash
+omarchy bar put dev.cstav.omarchy.plugin.hyprbattles --section right
+```
+
+If that says it is already on the bar without adding it, the id is in
+`plugins` but not in the layout; add `{"id": "dev.cstav.omarchy.plugin.hyprbattles"}`
+to `bar.layout.right` in `~/.config/omarchy/shell.json` yourself. The icon is
+the same crossed swords the menu row carries, grey while battles are off, and
+it lights a small red dot only when a creature is one meal from evolving.
 
 ## Turning it off
 
-The menu row, or:
+The switch at the top of the bar panel, the menu row, or:
 
 ```bash
 bin/battles-ctl off        # or on, or toggle

@@ -21,11 +21,18 @@ bin/battles-ctl move left       # move the focused window, roll if it collided
 bin/battles-ctl                 # current battle state as JSON (needs the daemon)
 bin/battles-ctl debug           # force a battle; pick N / advance to drive it
 bin/battles-ctl pantry          # the food shelves, read-only, daemon or not
+bin/battles-ctl roster          # every window as a creature (--json for the panel)
+bin/battles-ctl feed <addr> <shelf>   # one portion, daemon or not
+bin/battles-ctl sleeping        # creatures whose windows are shut
+bin/battles-ctl moves <addr>    # the four carried, and the whole learnset
+bin/battles-ctl teach <addr> <slot> <TYPE:n>   # swap one of the four
 bin/battles-ctl assets          # asset mode + what every sound resolves to
 ```
 
 Forcing/inspecting through the shell instead of the socket:
 `omarchy-shell -q hyprscroll2d-battle debugBattle | cancel`, `omarchy-shell hyprscroll2d-battle shown`.
+The bar panel's own views: `omarchy-shell -q hyprbattles-roster open | pantry |
+food <addr>`.
 
 ## Two traps
 
@@ -44,10 +51,12 @@ no pad and no screen:
 
 | Layer | File | Owns |
 | --- | --- | --- |
-| Rules | `lib/battle_rules.py` | Creatures, types, damage, turn loop, menus, timeouts. **Zero I/O.** Emits a snapshot dict after every change. |
+| Rules | `lib/battle_rules.py` | Creatures, types, damage, turn loop, menus, timeouts, and the progression maths - experience, stages, appetite - plus the `Evolution` scene. **Zero I/O.** Emits a snapshot dict after every change. |
+| Records | `lib/creatures.py` | What a window class has earned, what one live window has eaten, window uptime off `/proc`, and the roster/feed the daemon and the CLI share. The only module here that writes anything but a ledger. |
 | Moves | `lib/window_moves.py` | Which command moves a window one cell per layout, and whether a move swapped two windows. **Zero I/O.** |
 | Wiring | `bin/battles` (daemon) | Sockets, sound, pad lease, bar toggle, the roll, publishing the snapshot. |
-| Picture | `Battle.qml` + `BattleFighter/BattleStatusBox/BattleTypeChip/PixelText.qml` | Draws the snapshot and nothing else. |
+| Picture | `Battle.qml` + `BattleFighter/BattleStatusBox/BattleTypeChip/PixelText.qml` | Draws the snapshot and nothing else. Two scenes: `scene: "battle"` and `scene: "evolve"`. |
+| Panel | `Roster.qml` (bar widget) | The switch, one card per window, and the food. Reads `battles-ctl roster --json`, writes through `battles-ctl feed`. Cannot reach a window. |
 
 Data flow: daemon writes `$XDG_RUNTIME_DIR/hyprscroll2d-battle.json` after every
 change → `Battle.qml` watches that file. Input goes the other way: the overlay
@@ -102,6 +111,28 @@ Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
   order**; a test asserts the daemon keeps no copy.
 - **Generated audio must stay playable**: not silent, not clipped, short
   enough for a one-shot, and the theme must loop without a click at the seam.
+- **A creature's stats and learn order are seeded from its class key, never
+  from its address** (`key_seed`). Addresses are handed out fresh on every
+  launch, so an address-seeded creature re-rolled itself every restart while
+  keeping its level. A shut window has no address at all, which is what the
+  sleeping list needs.
+- **A creature is its window class, never its address** (`lib/creatures.py`).
+  Addresses are recycled; a record kept under one would be lost on restart and
+  then inherited by a stranger. An *appetite* is per window, keyed by pid and
+  process start time, and swept when the window dies.
+- **A creature always carries four moves, at least two of its own type, and
+  all of them ones it has learned** (`Learning`). A record that says otherwise
+  is ignored in favour of the derived four - `carried()` decides, nothing
+  else. The learnset only ever grows with level and stage.
+- **Feeding cannot reach a window.** A test greps `lib/creatures.py` and
+  `Roster.qml` for `dispatch`, `subprocess`, `hyprctl` and the rest. The panel
+  reads the window list and writes a record; that is all it may ever do.
+- **An evolution holds nothing and moves nothing** - no pad, no bar, no
+  window - and the record is written *before* the animation, so skipping it
+  costs only the picture (`Evolving`).
+- **The bar icon is never the urgent colour.** On is the bar's own colour, off
+  is grey, and the red dot appears only when a creature is one meal on the
+  shelves away from evolving - and never while battles are off.
 - Nothing can get stuck: text self-advances (1.7s), idle menu gives up (25s),
   hard cap (180s), rule crashes are caught in `tick_battle()`, the overlay has
   its own 2-minute watchdog, and losing the pad lease ends the battle.
@@ -109,14 +140,16 @@ Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
 ## State lives in files, not in the daemon
 
 `~/.local/state/hyprscroll2d/` holds `battles-disabled` (presence = off),
-`battles-assets` (the mode), and `pantry.json` (the eaten-portions ledger).
+`battles-assets` (the mode), `pantry.json` (the eaten-portions ledger) and
+`creatures.json` (what each class has earned, and what each live window has
+eaten).
 Files, because the Omarchy menu row's `checked` condition and `battles-ctl`
 must answer while the shell is restarting. `battles-ctl` reads/writes them
 directly and only *nudges* the daemon afterwards.
 
 ## Sound and assets
 
-All seven WAVs are synthesised by `bin/make-battle-audio` from the stdlib
+All eight WAVs are synthesised by `bin/make-battle-audio` from the stdlib
 `wave` module and committed, so a clone fights with sound and ships nothing
 anyone else wrote. **Keep it that way** — no third-party audio, fonts, sprites
 or names, and no cover of an existing tune. User music goes *outside* the
@@ -134,8 +167,11 @@ file by mode (`auto`/`generated`/`custom`), overridable for one run with
 - `tests/battles.py` loads the extension-less `bin/battles` and `bin/battles-ctl`
   through `SourceFileLoader`; new executables there need the same treatment.
 - Docs carry the reasoning: `docs/BATTLES.md` (rules, trigger, sound, escape
-  hatches), `docs/FOOD.md` (the pantry and its ledger). Behaviour changes
+  hatches), `docs/FOOD.md` (the pantry and its ledger), `docs/CREATURES.md`
+  (identity, levels, evolution, hunger, the bar panel). Behaviour changes
   belong in them too.
+- QML sizes come from `Style.font.*`, which are **pixels**: `font.pixelSize`,
+  never `pointSize`, or everything renders a third too big.
 - Commit subjects are a sentence, not a conventional-commits prefix
   ("Reap the bar toggles, and correct the sound doc"), and the body explains
   *why*, including the alternatives dropped.

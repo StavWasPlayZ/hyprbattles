@@ -14,6 +14,25 @@
     battles-ctl pantry          # what is on the shelves right now: a live,
                                 # read-only reading of the machine
 
+    battles-ctl moves <addr>    # what a window carries, and what it has yet
+                                # to learn
+    battles-ctl teach <addr> <slot> <TYPE:n>
+                                # swap the move in slot 0-3 for one it knows.
+                                # It has to keep two of its own type.
+
+    battles-ctl roster          # every open window as a creature: level,
+                                # stage, what it has won and how hungry it is
+    battles-ctl roster --json   # the same, as the bar panel reads it
+    battles-ctl sleeping        # the creatures whose windows are shut. They
+                                # keep their levels and their moves; they have
+                                # no appetite, because they have no window.
+    battles-ctl feed <addr> <shelf>
+                                # feed one window one portion. The machine has
+                                # to have the food spare and the window has to
+                                # have the appetite for it; an older window
+                                # has more. Levels are earned this way, and
+                                # enough of them evolve the creature.
+
     battles-ctl assets          # which sound is coming from which file, and
                                 # why. The thing to run when your own file is
                                 # not playing.
@@ -54,14 +73,19 @@ import sys
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PLUGIN_ROOT, "lib"))
-# The exceptions to this script importing nothing, and both for the same
+# The exceptions to this script importing nothing, and all for the same
 # reason: a second copy of one of these answers would be a second answer.
-# Which file a sound comes from is the whole point of `battles-ctl assets`,
-# and how a window is moved has to be what the daemon would have done, or a
-# move made with the daemon down would land differently from one made with it
-# up. All three are pure stdlib and do nothing at import.
+# Which file a sound comes from is the whole point of `battles-ctl assets`;
+# how a window is moved has to be what the daemon would have done, or a move
+# made with the daemon down would land differently from one made with it up;
+# and the roster, the pantry and a meal have to read and cost the same here
+# as they do in the daemon, because both write the same two files. All of
+# them are pure stdlib and do nothing at import.
 import battle_assets                                        # noqa: E402
+import battle_rules as rules                                # noqa: E402
+import creatures                                            # noqa: E402
 import hyprland                                             # noqa: E402
+import pantry                                               # noqa: E402
 import window_moves as moves                                # noqa: E402
 
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
@@ -74,7 +98,9 @@ STATE_HOME = (os.environ.get("XDG_STATE_HOME")
 DISABLED_FLAG = os.path.join(STATE_HOME, "hyprscroll2d", "battles-disabled")
 
 COMMANDS = ("status", "enabled", "on", "off", "toggle", "cancel", "stop",
-            "debug", "pantry", "assets", "pick", "advance", "key", "move")
+            "debug", "pantry", "roster", "sleeping", "feed", "moves", "teach",
+            "assets",
+            "pick", "advance", "key", "move")
 # These work without a daemon; the rest need one. `move` is not among them
 # because a daemon is what makes a move a battle - but it is the one command
 # that still does its job without one, by making the move itself.
@@ -164,6 +190,99 @@ def ask(message):
         return json.loads(client.recv(8192).decode())
 
 
+def larder():
+    """The pantry, read the way the daemon reads it - same shelves, same
+    ledger - for the commands that answer with the daemon stopped."""
+    return pantry.Pantry(ledger=pantry.Ledger(
+        os.path.join(STATE_HOME, "hyprscroll2d", "pantry.json")))
+
+
+def local_pantry():
+    return {"pantry": [
+        {"key": shelf["key"], "name": shelf["name"], "note": shelf["note"],
+         "unit": shelf["unit"], "kind": shelf["kind"],
+         "portion": shelf["portion"], "nourish": shelf.get("nourish", 0),
+         "available": shelf["available"], "servings": shelf["servings"]}
+        for shelf in larder().stock()]}
+
+
+def local_roster():
+    """The roster with no daemon running. Both sides read the same three
+    files, so the answer is the same one; what is missing is only the
+    evolution on screen, which needs something drawing."""
+    hypr = hyprland.Hyprland()
+    store = creatures.Store()
+    clients = hypr.query("clients") or []
+    store.touch(clients)
+    return {"roster": creatures.roster(clients, store, larder()),
+            "sleeping": creatures.sleeping(clients, store),
+            "enabled": enabled(), "pantry": local_pantry()["pantry"]}
+
+
+def local_feed(address, shelf_key):
+    hypr = hyprland.Hyprland()
+    clients = hypr.query("clients") or []
+    window = None
+    for client in clients:
+        if str(client.get("address") or "") == str(address):
+            window = client
+            break
+    if not window:
+        return {"ok": False, "message": "That window is gone."}
+    return creatures.feed(window, shelf_key, creatures.Store(), larder())
+
+
+def window_row(address):
+    """One window's roster row, read the way the daemon would read it."""
+    for row in local_roster()["roster"]:
+        if str(row["address"]) == str(address):
+            return row
+    return None
+
+
+def local_teach(address, slot, move):
+    hypr = hyprland.Hyprland()
+    store = creatures.Store()
+    window = creatures.find(address, hypr.query("clients") or [], store)
+    if not window:
+        return {"ok": False, "message": "That window is gone."}
+    return creatures.teach(window, slot, move, store)
+
+
+def print_moves(state):
+    row = state.get("row") or {}
+    carried = [move["id"] for move in row.get("moves") or []]
+    for slot, move in enumerate(row.get("moves") or []):
+        print("%d  %-14s %-6s power %d   %s"
+              % (slot, move["name"], move["type"], move["power"], move["id"]))
+    print()
+    for entry in row.get("learnset") or []:
+        if entry["id"] in carried:
+            mark = "carried"
+        elif entry["known"]:
+            mark = "known"
+        else:
+            mark = "at LV %d" % entry["at"]
+        print("   %-14s %-6s power %-3d %-9s %s"
+              % (entry["name"], entry["type"], entry["power"], mark,
+                 entry["id"]))
+    return 0
+
+
+def print_roster(state):
+    rows = state.get("roster") or []
+    if not rows:
+        print("no windows to feed")
+        return 0
+    for row in rows:
+        stars = "*" * max(0, int(row.get("stage", 1)) - 1)
+        print("%-14s %-6s L%-3d %-2s %4d/%-4d hunger  %2dW %2dL  %s" % (
+            row["name"], row["type"], row["level"], stars,
+            row["hunger"], row["appetite"], row["wins"], row["losses"],
+            row["address"]))
+    return 0
+
+
 def move(direction):
     """Move the focused window with no daemon to do it for us.
 
@@ -210,15 +329,36 @@ def main(argv):
         print("true" if enabled() else "false")
         return 0
 
-    message = (" ".join([argument] + argv[2:])
-               if argument in ("pick", "key", "move") else argument)
+    arguments = [word for word in argv[2:] if not word.startswith("--")]
+    message = (" ".join([argument] + arguments)
+               if argument in ("pick", "key", "move", "feed", "teach")
+               else argument)
+    # One window's moves are a slice of the roster, so the roster is what is
+    # asked for and the slice is taken here.
+    if argument in ("moves", "sleeping"):
+        message = "roster"
     try:
         state = ask(message)
     except (OSError, ValueError):
+        # Three commands answer without a daemon, because all three are the
+        # files rather than the process: a move still has to move, and a
+        # roster read - or a meal - is the same two files either way.
         if argument == "move":
             return move(argv[2] if len(argv) > 2 else "")
-        print("window battles daemon is not running", file=sys.stderr)
-        return 1
+        if argument == "pantry":
+            state = local_pantry()
+        elif argument in ("roster", "moves", "sleeping"):
+            state = local_roster()
+        elif argument == "teach":
+            state = local_teach(arguments[0] if arguments else "",
+                                arguments[1] if len(arguments) > 1 else "",
+                                arguments[2] if len(arguments) > 2 else "")
+        elif argument == "feed":
+            state = local_feed(arguments[0] if arguments else "",
+                               arguments[1] if len(arguments) > 1 else "")
+        else:
+            print("window battles daemon is not running", file=sys.stderr)
+            return 1
 
     if argument == "move":
         return 0                # the daemon moved it, and rolled for it
@@ -234,6 +374,47 @@ def main(argv):
                 describe(shelf["available"], shelf["unit"]),
                 shelf["servings"], shelf["note"]))
         return 0
+
+    if argument == "sleeping":
+        rows = state.get("sleeping") or []
+        if "--json" in argv[2:]:
+            print(json.dumps({"sleeping": rows}))
+            return 0
+        if not rows:
+            print("every creature has a window open")
+            return 0
+        for row in rows:
+            stars = "*" * max(0, int(row.get("stage", 1)) - 1)
+            print("%-14s %-6s L%-3d %-2s %2dW %2dL  %s"
+                  % (row["name"], row["type"], row["level"], stars,
+                     row["wins"], row["losses"], row["key"]))
+        return 0
+
+    if argument == "moves":
+        wanted = arguments[0] if arguments else ""
+        row = None
+        for candidate in (state.get("roster") or []) + (state.get("sleeping") or []):
+            if wanted and wanted in (str(candidate["address"]),
+                                     str(candidate["key"])):
+                row = candidate
+        if not row:
+            print("no such window: %s" % wanted, file=sys.stderr)
+            return 1
+        if "--json" in argv[2:]:
+            print(json.dumps({"row": row}))
+            return 0
+        return print_moves({"row": row})
+
+    if argument == "teach" and "--json" not in argv[2:]:
+        print(state.get("message") or "")
+        return 0 if state.get("ok") else 1
+
+    if argument == "roster" and "--json" not in argv[2:]:
+        return print_roster(state)
+
+    if argument == "feed" and "--json" not in argv[2:]:
+        print(state.get("message") or "")
+        return 0 if state.get("ok") else 1
 
     print(json.dumps(state))
     return 0

@@ -42,6 +42,7 @@ PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PLUGIN_ROOT, "lib"))
 import battle_assets                                       # noqa: E402
 import battle_rules as rules                                # noqa: E402
+import creatures                                           # noqa: E402
 import hyprland                                            # noqa: E402
 import pantry                                              # noqa: E402
 import window_moves as moves                               # noqa: E402
@@ -65,6 +66,10 @@ DISABLED_FLAG = os.path.join(STATE_HOME, "hyprscroll2d", "battles-disabled")
 # the food is a live reading of the machine, and this is the only thing that
 # stops the same 512 MiB being fed to a creature over and over.
 LEDGER_PATH = os.path.join(STATE_HOME, "hyprscroll2d", "pantry.json")
+# What every window class has earned, and what every live window has eaten
+# today. See lib/creatures.py: a level belongs to the class, so it outlives
+# the window, and an appetite belongs to the window, so it does not.
+CREATURES_PATH = creatures.STORE_PATH
 BAR_FLAG_PATH = os.path.join(STATE_HOME, "omarchy", "toggles", "bar-off")
 # What ships. A user's own files live outside the checkout and win or lose
 # per name according to the assets mode; lib/battle_assets.py is the whole of
@@ -309,9 +314,16 @@ class Daemon:
         # The pantry is read-only: it reads counters out of /proc and writes
         # nothing but its own ledger. Nothing is dropped, freed or killed.
         self.pantry = pantry.Pantry(ledger=pantry.Ledger(LEDGER_PATH))
+        # Levels, wins and appetites. Read on every roster and every feed
+        # rather than cached: `battles-ctl` writes the same file, and a menu
+        # that disagrees with the daemon would be a second answer.
+        self.creatures = creatures.Store(CREATURES_PATH)
         self.selector = selectors.DefaultSelector()
 
         self.battle = None
+        # The other thing the overlay can be showing: an evolution, which is
+        # not a battle and cannot be played. Only ever one of the two is up.
+        self.scene = None
         self.source = "layout"
         # Which of the two ways in was last used, so the overlay can label the
         # controls with the buttons that are actually under the player's
@@ -465,15 +477,23 @@ class Daemon:
             defender = self.window_by_address(defender_address, clients)
             if not challenger or not defender:
                 return
+            self.creatures.load()
             fight = rules.Battle(
-                rules.creature(challenger), rules.creature(defender), now,
-                direction=direction, monitor=self.monitor_name(challenger),
+                rules.creature(challenger, self.creatures.record(challenger)),
+                rules.creature(defender, self.creatures.record(defender)),
+                now, direction=direction,
+                monitor=self.monitor_name(challenger),
                 larder=self.pantry)
+            # Who fought, so the result can be written down against the right
+            # class once it is over. The creature only carries a name.
+            fight.challenger_window = challenger
+            fight.defender_window = defender
         except Exception as error:
             log("battle could not start: %s" % error)
             return
 
         self.battle = fight
+        self.scene = None
         self.source = source
         # A d-pad collision was made with a pad in hand; everything else -
         # a key bound to `battles-ctl move`, the layout plugin, debug - was
@@ -527,6 +547,82 @@ class Daemon:
                 self.notify(
                     "%s was beaten" % fight.player.get("name", "Your window"),
                     "Your program had retreated to its original position...")
+
+        self.award(fight, now)
+
+    def award(self, fight, now):
+        """Write a finished battle down against both classes, and put an
+        evolution on screen if the experience bought one.
+
+        A fled battle is worth nothing to anybody, which is the same thing a
+        flee has always meant: it never happened.
+        """
+        if fight.result not in ("win", "loss"):
+            return
+        evolutions = []
+        try:
+            challenger = getattr(fight, "challenger_window", None)
+            defender = getattr(fight, "defender_window", None)
+            player = getattr(fight, "player", None) or {}
+            foe = getattr(fight, "foe", None) or {}
+            pairs = ((challenger, player, foe, fight.result),
+                     (defender, foe, player,
+                      "win" if fight.result == "loss" else "loss"))
+            self.creatures.load()
+            for window, side, other, result in pairs:
+                if not window:
+                    continue
+                earned = rules.xp_for_result(result, other.get("level", 1))
+                before = rules.creature(window, self.creatures.record(window))
+                record = self.creatures.award(
+                    window, xp=earned,
+                    win=1 if result == "win" else 0,
+                    loss=1 if result == "loss" else 0)
+                after = rules.creature(window, record)
+                if after["stage"] > before["stage"]:
+                    evolutions.append((window, after))
+        except Exception as error:
+            log("could not write the result down: %s" % error)
+            return
+
+        # One picture, and the challenger's if both crossed: the fight was
+        # its idea. The other one still evolved - it is written down either
+        # way - it simply does not get the animation.
+        if evolutions:
+            window, evolved = evolutions[0]
+            self.evolve(window, evolved, now)
+
+    def evolve(self, window, evolved, now):
+        """Put an evolution on screen. Never fatal, and never a battle: it
+        holds nothing, moves nothing and can be walked away from."""
+        if self.battle:
+            return
+        try:
+            self.scene = rules.Evolution(evolved, evolved["stage"], now,
+                                         monitor=self.monitor_name(window))
+        except Exception as error:
+            log("evolution could not be shown: %s" % error)
+            self.scene = None
+            return
+        self.effects.play("battle-evolve.wav")
+        self.publish()
+
+    def tick_scene(self, now):
+        scene = self.scene
+        if not scene:
+            return
+        try:
+            if scene.tick(now):
+                if scene.phase == "done":
+                    self.effects.play("battle-levelup.wav")
+                self.publish()
+            if scene.finished(now):
+                self.scene = None
+                self.publish()
+        except Exception as error:
+            log("evolution aborted: %s" % error)
+            self.scene = None
+            self.publish()
 
     def set_bar(self, visible):
         # `omarchy-toggle-bar` takes the state of a flag named `bar-off`, not
@@ -670,6 +766,10 @@ class Daemon:
 
     def state(self):
         if not self.battle:
+            if self.scene:
+                snapshot = self.scene.snapshot()
+                snapshot["enabled"] = self.enabled()
+                return snapshot
             return {"active": False, "enabled": self.enabled()}
         snapshot = self.battle.snapshot()
         snapshot["enabled"] = True
@@ -710,12 +810,104 @@ class Daemon:
 
     # ------------------------------------------------------------ control
 
+    def shelves(self):
+        """The pantry as the overlay and the panel want it: a live reading,
+        read-only, with nothing on it that is not on screen."""
+        return [
+            {"key": shelf["key"], "name": shelf["name"],
+             "note": shelf["note"], "unit": shelf["unit"],
+             "kind": shelf["kind"], "portion": shelf["portion"],
+             "nourish": shelf.get("nourish", 0),
+             "available": shelf["available"], "servings": shelf["servings"]}
+            for shelf in self.pantry.stock()
+        ]
+
+    def roster(self):
+        """Every open window as a creature, and every creature whose window
+        is shut. Read-only, like the pantry: the panel can look at every
+        window on the machine and touch none of them."""
+        try:
+            self.creatures.load()
+            clients = self.hypr.query("clients") or []
+            # Every open window gets a record, whether or not it has ever
+            # fought or eaten: without one, closing something that never did
+            # either would leave nothing behind to sleep.
+            self.creatures.touch(clients)
+            return (creatures.roster(clients, self.creatures, self.pantry),
+                    creatures.sleeping(clients, self.creatures))
+        except Exception as error:
+            log("cannot read the roster: %s" % error)
+            return [], []
+
+    def feed(self, address, shelf_key, now):
+        """Feed one window from the panel. The one thing in this daemon that
+        changes a creature without a fight - and still nothing that changes a
+        window."""
+        try:
+            self.creatures.load()
+            clients = self.hypr.query("clients") or []
+            window = creatures.find(address, clients, self.creatures)
+        except Exception as error:
+            log("cannot feed: %s" % error)
+            return {"ok": False, "message": "The window list is unreadable."}
+        if not window:
+            return {"ok": False, "message": "That window is gone."}
+
+        result = creatures.feed(window, shelf_key, self.creatures, self.pantry)
+        if not result.get("ok"):
+            return result
+        self.effects.play("battle-heal.wav")
+        if result.get("leveled"):
+            self.effects.play("battle-levelup.wav")
+        if result.get("evolved"):
+            self.evolve(window, result["creature"], now)
+        return result
+
+    def teach(self, address, slot, move):
+        """Swap one of a window's four moves. Like feeding, this writes a
+        record and touches no window."""
+        try:
+            self.creatures.load()
+            clients = self.hypr.query("clients") or []
+            # By address while it is open, by the name it is remembered under
+            # once it is not: moves belong to the class, so a shut window is
+            # still something you can pick a loadout for.
+            window = creatures.find(address, clients, self.creatures)
+        except Exception as error:
+            log("cannot teach: %s" % error)
+            return {"ok": False, "message": "The window list is unreadable."}
+        if not window:
+            return {"ok": False, "message": "That window is gone."}
+
+        result = creatures.teach(window, slot, move, self.creatures)
+        if result.get("ok"):
+            self.effects.play("battle-select.wav")
+        return result
+
     def handle_command(self, text):
         parts = text.strip().split()
         verb = parts[0] if parts else "status"
         now = time.monotonic()
 
-        if verb == "cancel" and self.battle:
+        if verb in ("cancel", "stop") and not self.battle and self.scene:
+            # Escape during an evolution skips the picture. The level itself
+            # was written down before the animation started, so there is
+            # nothing here to lose.
+            self.scene.flee(now)
+            self.scene = None
+            self.publish()
+        elif verb == "roster":
+            rows, asleep = self.roster()
+            return {"roster": rows, "sleeping": asleep,
+                    "enabled": self.enabled(), "pantry": self.shelves()}
+        elif verb == "feed":
+            return self.feed(parts[1] if len(parts) > 1 else "",
+                             parts[2] if len(parts) > 2 else "", now)
+        elif verb == "teach":
+            return self.teach(parts[1] if len(parts) > 1 else "",
+                              parts[2] if len(parts) > 2 else "",
+                              parts[3] if len(parts) > 3 else "")
+        elif verb == "cancel" and self.battle:
             # Escape. The first one flees; a second one, with the battle
             # already over and only its closing line left on screen, takes
             # the overlay down immediately. The result is applied either way,
@@ -733,13 +925,7 @@ class Daemon:
             self.set_enabled(not self.enabled() if verb == "toggle"
                              else verb == "on")
         elif verb == "pantry":
-            return {"pantry": [
-                {"key": shelf["key"], "name": shelf["name"],
-                 "note": shelf["note"], "unit": shelf["unit"],
-                 "portion": shelf["portion"], "available": shelf["available"],
-                 "servings": shelf["servings"]}
-                for shelf in self.pantry.stock()
-            ]}
+            return {"pantry": self.shelves()}
         elif verb == "move":
             # The layout-agnostic trigger: move the window, and roll if that
             # move landed on somebody. Bound to a key, this replaces whatever
@@ -912,6 +1098,10 @@ class Daemon:
             deadline = self.battle.deadline()
             if deadline is not None:
                 deadlines.append(deadline)
+        if self.scene:
+            deadline = self.scene.deadline()
+            if deadline is not None:
+                deadlines.append(deadline)
         if self.pad.held:
             deadlines.append(self.pad.renew_at)
         if not self.event_stream:
@@ -953,6 +1143,7 @@ class Daemon:
             now = time.monotonic()
             self.pad.tick(now)
             self.tick_battle(now)
+            self.tick_scene(now)
             if not self.event_stream and now >= self.event_retry:
                 self.connect_events()
 
@@ -961,6 +1152,7 @@ class Daemon:
         # stop the music, and clear the file the overlay watches so it cannot
         # be left holding the keyboard over a desktop with nothing driving it.
         self.battle = None
+        self.scene = None
         try:
             self.end(time.monotonic())
         except Exception:

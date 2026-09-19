@@ -31,12 +31,13 @@ ever reaches for a write, an unlink, a signal or a subprocess.
 | **SWAP** | `SwapTotal - SwapFree` | 256 MiB | Junk food. Heals 48% - and drops speed by 30% for the rest of the battle. Swapping is slow; so is eating it. |
 | **ENTROPY** | `entropy_avail` | 64 bits | Candy. Heals anywhere from nothing to double, decided per bite. Reading the pool does not drain it. |
 | **ZOMBIES** | processes in state `Z` | 1 | Carrion. Heals 35% and raises attack. Rare, grim, bracing. |
+| **IDLE CYCLES** | load average against core count | 10% | A vitamin. Heals 10% and raises speed - the one stat no other shelf hands out. Plentiful on a quiet machine, gone under a compile. |
 | **TMP SCRAPS** | `/tmp` used bytes | 256 MiB | Barely a mouthful. Heals 9%. On a tmpfs it is memory too, which is a nice accident. |
 
 Healing is a fraction of the creature's **own** maximum HP, so a 4K browser
 and a little terminal both get a meal that means something to them.
 
-Two of the six have a character beyond the numbers. Swap is the one you take
+Two of the seven have a character beyond the numbers. Swap is the one you take
 when you are desperate, and regret. Entropy is the one you take when you are
 feeling lucky - it multiplies its heal by 0, 0.5, 1, 1.5 or 2, so it is as
 likely to do nothing as to do twice the job.
@@ -85,20 +86,24 @@ chewing, which is what stops `ITEM` being strictly better than `FIGHT`.
 
 ## Growing
 
-Every shelf is worth some nourishment, and 60 points of it is a level:
+Every shelf is worth some nourishment:
 
 ```
-FREE RAM 34   PAGE CACHE 12   SWAP 40   ENTROPY 18   ZOMBIES 30   SCRAPS 9
+FREE RAM 34   PAGE CACHE 12   SWAP 40   ENTROPY 18
+ZOMBIES 30    IDLE CYCLES 14  SCRAPS 9
 ```
 
-A level adds 8 maximum HP and 2 to each of attack, defense and speed, and
-rings the sting that until now only played when you won. So a long battle
-against something much bigger than you is winnable, if the machine has enough
-spare memory to eat your way up - which is a sentence that makes no sense
-anywhere but here.
+**In a battle**, 60 points of it is a level, there and then: 8 maximum HP and
+2 to each of attack, defense and speed, and the sting that until now only
+played when you won. So a long battle against something much bigger than you
+is winnable if the machine has enough spare memory to eat your way up - which
+is a sentence that makes no sense anywhere but here. That level is for the
+fight only; nothing is carried out of it.
 
-Nourishment is per battle. Creatures are derived from their windows and do not
-persist, so nothing is carried between fights.
+**At the desk**, the same nourishment is worth twice as much experience, and
+experience is kept. That is the other way to feed something, and it is a
+different bargain: in a fight you eat to survive the next swing, and between
+fights you eat to become something. See [CREATURES.md](CREATURES.md).
 
 ## Checking the fridge
 
@@ -120,14 +125,28 @@ battle running.
 
 ## Feeding outside a battle
 
-Not built, on purpose. A creature is derived from its window at the moment a
-battle starts and does not exist between fights - there is no HP sitting
-anywhere to heal. Feeding a window out of combat would mean giving creatures
-persistent state, which is a much bigger change than it sounds and would need
-somewhere to keep it and a story for what happens when the window closes.
+Built, in the bar panel: pick a window, pick a food. It was held back for a
+long time for a good reason - a creature used to be derived from its window at
+the moment a battle started and not exist in between, so there was no HP
+sitting anywhere to heal and nowhere to keep what a meal had done.
 
-`battles-ctl pantry` is the part of that idea that did fall out cheaply: you
-can see what your creatures would be eating without starting a fight.
+What unlocked it was giving creatures a record of their own, keyed by window
+class so it can outlive the window, and an appetite bought with uptime so a
+panel with a feed button is not a level button. Both are in
+[CREATURES.md](CREATURES.md); the short version is that feeding is gated
+twice, and the pantry is only the first gate:
+
+- the machine has to have the food spare - this document, and the ledger;
+- the window has to have room for it - its age.
+
+A meal outside a battle heals nothing. There is nothing to heal: HP only
+exists while a fight is on. It buys experience, and enough of that evolves the
+creature.
+
+```bash
+bin/battles-ctl roster                  # every window, with how hungry it is
+bin/battles-ctl feed <address> staple   # one portion of FREE RAM
+```
 
 ## Adding a shelf
 

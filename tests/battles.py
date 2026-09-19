@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(ROOT, "lib"))
 
 import battle_assets as assets                                # noqa: E402
 import battle_rules as battles                                # noqa: E402
+import creatures                                              # noqa: E402
 import pantry                                                 # noqa: E402
 import window_moves as moves                                  # noqa: E402
 
@@ -56,9 +57,20 @@ def load_daemon():
 bd = load_daemon()
 
 
-def window(address="0x1", klass="foot", size=(800, 600)):
-    return {"address": address, "class": klass, "initialClass": klass,
-            "size": list(size), "title": klass}
+def window(address="0x1", klass="foot", size=(800, 600), pid=None):
+    entry = {"address": address, "class": klass, "initialClass": klass,
+             "size": list(size), "title": klass}
+    if pid is not None:
+        entry["pid"] = pid
+    return entry
+
+
+def store(path=None):
+    """A creature store in a directory nobody else is using, so a test never
+    reads or writes the records of the machine it is running on."""
+    if path is None:
+        path = os.path.join(tempfile.mkdtemp(), "creatures.json")
+    return creatures.Store(path)
 
 
 class Types(unittest.TestCase):
@@ -101,22 +113,43 @@ class Creatures(unittest.TestCase):
         second = battles.creature(window("0xdeadbeef", "firefox"))
         self.assertEqual(first, second)
 
-    def test_a_different_window_makes_a_different_creature(self):
-        first = battles.creature(window("0xdeadbeef"))
-        second = battles.creature(window("0xfeedface"))
+    def test_a_different_class_makes_a_different_creature(self):
+        first = battles.creature(window("0xdeadbeef", "foot"))
+        second = battles.creature(window("0xdeadbeef", "kitty"))
         self.assertNotEqual((first["attack"], first["defense"], first["speed"]),
                             (second["attack"], second["defense"], second["speed"]))
 
-    def test_a_bigger_window_is_a_higher_level(self):
+    def test_the_same_class_is_the_same_creature_at_any_address(self):
+        # Stats used to hang off the address, which Hyprland hands out fresh
+        # on every launch: a creature kept its level across a restart and
+        # re-rolled everything else. They hang off the class now.
+        first = battles.creature(window("0xdeadbeef", "foot"))
+        second = battles.creature(window("0xfeedface", "foot"))
+        self.assertEqual((first["attack"], first["defense"], first["speed"]),
+                         (second["attack"], second["defense"], second["speed"]))
+        self.assertEqual([move["name"] for move in first["moves"]],
+                         [move["name"] for move in second["moves"]])
+
+    def test_a_bigger_window_is_sturdier_but_no_higher_a_level(self):
+        # Size used to be the whole level, and it was unfair: a window that
+        # cannot be fullscreened, a small monitor and a layout that tiles
+        # tightly all handed out levels nobody earned. It is a sturdiness
+        # bonus now, and levels are fed and fought for.
         small = battles.creature(window(size=(400, 300)))
         large = battles.creature(window(size=(1920, 1080)))
-        self.assertLess(small["level"], large["level"])
+        self.assertEqual(small["level"], large["level"])
+        self.assertLess(small["maxHp"], large["maxHp"])
+        self.assertLess(small["defense"], large["defense"])
 
-    def test_levels_stay_inside_their_bounds(self):
+    def test_the_size_bonus_stays_inside_its_bounds(self):
         for size in ((1, 1), (20, 20), (7680, 4320), (99999, 99999)):
-            level = battles.level_of(window(size=size))
-            self.assertGreaterEqual(level, 3)
-            self.assertLessEqual(level, 40)
+            bonus = battles.size_bonus(window(size=size))
+            self.assertGreaterEqual(bonus, 0)
+            self.assertLessEqual(bonus, battles.SIZE_BONUS_CAP)
+
+    def test_a_window_nobody_has_fed_starts_at_the_base_level(self):
+        self.assertEqual(battles.creature(window())["level"],
+                         battles.BASE_LEVEL)
 
     def test_a_nonsense_window_still_produces_a_fighter(self):
         for broken in ({}, {"address": None}, {"size": "not a size"},
@@ -587,8 +620,11 @@ class BattleWiring(unittest.TestCase):
         daemon = bd.Daemon.__new__(bd.Daemon)
         daemon.battle = type("Fight", (), {
             "result": result, "direction": direction,
-            "player": {"name": "FOOT"},
+            "player": {"name": "FOOT", "level": 5},
+            "foe": {"name": "FIREFOX", "level": 5},
         })()
+        daemon.creatures = store()
+        daemon.scene = None
         daemon.quiet_until = 0.0
         daemon.move_style = style
         daemon.pad = FakePad()
@@ -1076,6 +1112,8 @@ class EncounterRumble(unittest.TestCase):
         daemon.published = None
         daemon.publish = lambda: None
         daemon.pantry = None
+        daemon.creatures = store()
+        daemon.scene = None
         daemon.bar_hidden = False
         daemon.set_bar = lambda visible: None
         daemon.monitor_name = lambda client: "DP-4"
@@ -1882,6 +1920,837 @@ class Eating(unittest.TestCase):
         for key in ("item", "shelves", "fed", "nourishPerLevel"):
             self.assertIn(key, snapshot)
         self.assertEqual(json.loads(json.dumps(snapshot)), snapshot)
+
+
+class Progression(unittest.TestCase):
+    """Levels are earned, and enough of them evolve a creature."""
+
+    def test_nothing_earned_is_the_base_level(self):
+        self.assertEqual(battles.progress(0)[0], battles.BASE_LEVEL)
+
+    def test_experience_only_ever_buys_more(self):
+        last = 0
+        for xp in range(0, 6000, 37):
+            level = battles.progress(xp)[0]
+            self.assertGreaterEqual(level, last)
+            last = level
+
+    def test_the_ladder_gets_slower_and_then_stops(self):
+        first = battles.progress(0)[2]
+        later = battles.progress(2000)[2]
+        self.assertGreater(later, first, "each level costs more than the last")
+        level, into, needed = battles.progress(10 ** 7)
+        self.assertEqual(level, battles.MAX_LEVEL)
+        self.assertEqual((into, needed), (0, 0), "nothing is owed at the cap")
+
+    def test_nonsense_experience_is_a_beginner_rather_than_a_crash(self):
+        for broken in (None, "", "lots", -40, [1]):
+            self.assertEqual(battles.progress(broken)[0], battles.BASE_LEVEL)
+
+    def test_the_experience_a_level_costs_is_the_experience_it_takes(self):
+        for level in (battles.BASE_LEVEL, 9, battles.STAGE_LEVELS[1],
+                      battles.STAGE_LEVELS[2], battles.MAX_LEVEL):
+            self.assertEqual(battles.progress(battles.xp_for_level(level))[0],
+                             level)
+
+    def test_how_far_off_evolving_is_counts_down_to_the_threshold(self):
+        first = battles.xp_for_level(battles.STAGE_LEVELS[1])
+        self.assertEqual(battles.xp_to_next_stage(0), first)
+        self.assertEqual(battles.xp_to_next_stage(first - 10), 10)
+        # Past the last threshold there is nothing left to ask for.
+        self.assertEqual(
+            battles.xp_to_next_stage(battles.xp_for_level(battles.MAX_LEVEL)), 0)
+
+    def test_the_three_stages_are_where_they_say_they_are(self):
+        self.assertEqual(battles.stage_for_level(battles.BASE_LEVEL), 1)
+        self.assertEqual(battles.stage_for_level(battles.STAGE_LEVELS[1]), 2)
+        self.assertEqual(battles.stage_for_level(battles.STAGE_LEVELS[2]), 3)
+        self.assertEqual(battles.stage_for_level(battles.MAX_LEVEL), 3)
+
+    def test_every_evolved_name_still_fits_the_plate(self):
+        for kind in battles.TYPES:
+            for stage in (1, 2, 3):
+                for name in ("FOOT", "ALACRITTY", "ANDROID-STUD"):
+                    evolved = battles.evolved_name(name, kind, stage)
+                    self.assertLessEqual(len(evolved), battles.NAME_WIDTH)
+                    self.assertTrue(evolved, "a creature always has a name")
+
+    def test_an_unevolved_creature_is_called_what_its_window_is(self):
+        self.assertEqual(battles.evolved_name("FOOT", "SHELL", 1), "FOOT")
+        self.assertNotEqual(battles.evolved_name("FOOT", "SHELL", 2), "FOOT")
+
+    def test_evolving_unlocks_the_type_s_strongest_move(self):
+        seed = 0xabc123
+        for kind in battles.TYPES:
+            strongest = max(battles.MOVES[kind], key=lambda m: m["power"])
+            early = [m["name"] for m in battles.moves_for(kind, seed, 1)]
+            self.assertNotIn(strongest["name"], early,
+                             "a beginner does not open with the big one")
+            grown = [m["name"] for m in battles.moves_for(kind, seed, 3)]
+            self.assertIn(strongest["name"], grown)
+
+    def test_the_last_stage_knows_all_of_its_own_type(self):
+        for kind in battles.TYPES:
+            moves_list = battles.moves_for(kind, 7, 3)
+            own = [m for m in moves_list if m["type"] == kind]
+            self.assertEqual(len(moves_list), 4)
+            self.assertEqual(len(own), len(battles.MOVES[kind]))
+
+    def test_every_stage_still_gets_four_moves_and_two_of_its_own(self):
+        for stage in (1, 2, 3):
+            for kind in battles.TYPES:
+                moves_list = battles.moves_for(kind, 99, stage)
+                own = [m for m in moves_list if m["type"] == kind]
+                self.assertEqual(len(moves_list), 4)
+                self.assertGreaterEqual(len(own), 2)
+
+    def test_a_record_makes_the_same_window_a_stronger_creature(self):
+        fresh = battles.creature(window("0xdeadbeef"))
+        fed = battles.creature(window("0xdeadbeef"), {"xp": 4000})
+        self.assertGreater(fed["level"], fresh["level"])
+        self.assertGreater(fed["maxHp"], fresh["maxHp"])
+        self.assertGreater(fed["attack"], fresh["attack"])
+
+    def test_winning_is_worth_more_than_losing_and_fleeing_worth_nothing(self):
+        self.assertGreater(battles.xp_for_result("win", 10),
+                           battles.xp_for_result("loss", 10))
+        self.assertEqual(battles.xp_for_result("draw", 10), 0)
+
+    def test_a_stronger_opponent_is_worth_more(self):
+        self.assertGreater(battles.xp_for_result("win", 30),
+                           battles.xp_for_result("win", 5))
+
+
+class Learning(unittest.TestCase):
+    """More moves than a creature can carry, and the choice of which four."""
+
+    # The same number a SHELL creature called "foot" is built from, so the
+    # sets these tests build are sets that creature could really carry.
+    SEED = battles.key_seed("foot")
+
+    def known(self, kind="SHELL", level=5, stage=1):
+        return [entry for entry in battles.learnset(kind, self.SEED, level, stage)
+                if entry["known"]]
+
+    def test_a_move_is_named_by_its_type_and_place(self):
+        move = battles.move_by_id("SHELL:2")
+        self.assertEqual(move["name"], battles.MOVES["SHELL"][2]["name"])
+        self.assertEqual(move["type"], "SHELL")
+
+    def test_a_nonsense_move_name_is_nothing_rather_than_a_crash(self):
+        for broken in (None, "", "SHELL", "SHELL:9", "NOPE:0", "SHELL:x"):
+            self.assertIsNone(battles.move_by_id(broken))
+
+    def test_the_four_it_is_born_with_are_four_it_knows(self):
+        for kind in battles.TYPES:
+            for stage in (1, 2, 3):
+                carried = battles.moves_for(kind, self.SEED, stage)
+                known = {entry["id"] for entry
+                         in battles.learnset(kind, self.SEED, 5, stage)
+                         if entry["known"]}
+                for move in carried:
+                    self.assertIn(battles._identify(move, kind), known,
+                                  "%s %s" % (kind, move["name"]))
+
+    def test_levelling_teaches_it_more(self):
+        early = len(self.known(level=5))
+        later = len(self.known(level=battles.MOVE_UNLOCK_LEVELS[-1]))
+        self.assertGreater(later, early)
+        # And it only ever grows.
+        last = 0
+        for level in range(0, 40):
+            count = len(self.known(level=level))
+            self.assertGreaterEqual(count, last)
+            last = count
+
+    def test_a_locked_move_says_when_it_arrives(self):
+        locked = [entry for entry in battles.learnset("SHELL", self.SEED, 5, 1)
+                  if not entry["known"]]
+        self.assertTrue(locked)
+        for entry in locked:
+            self.assertGreater(entry["at"], 5)
+
+    def test_evolving_is_what_unlocks_its_own_strongest(self):
+        strongest = battles.MOVES["SHELL"][-1]["name"]
+        early = [entry["name"] for entry in self.known(level=30, stage=1)]
+        self.assertNotIn(strongest, early)
+        grown = [entry["name"] for entry in self.known(level=30, stage=2)]
+        self.assertIn(strongest, grown)
+
+    def legal(self, level=13, stage=2):
+        """A carried set this creature could really have: its own type first,
+        then whatever else it has learned."""
+        known = self.known(level=level, stage=stage)
+        own = [entry["id"] for entry in known if entry["type"] == "SHELL"]
+        rest = [entry["id"] for entry in known if entry["type"] != "SHELL"]
+        return (own[:battles.MIN_OWN_MOVES]
+                + rest[:battles.CARRIED_MOVES - battles.MIN_OWN_MOVES])
+
+    def test_a_chosen_set_is_what_it_carries(self):
+        chosen = self.legal()
+        carried = battles.carried("SHELL", self.SEED, 2, 13, chosen)
+        self.assertEqual([battles._identify(move, "SHELL")
+                          for move in carried], chosen)
+
+    def test_a_set_that_is_not_a_real_choice_falls_back(self):
+        default = [battles._identify(move, "SHELL")
+                   for move in battles.moves_for("SHELL", self.SEED, 2)]
+        legal = self.legal()
+        locked = next(entry["id"] for entry
+                      in battles.learnset("SHELL", self.SEED, 13, 2)
+                      if not entry["known"])
+        for broken in (
+                legal[:3],                                  # too few
+                legal + [legal[0]],                         # too many
+                [legal[0], legal[0]] + legal[2:],           # the same twice
+                [legal[0]] + legal[2:] + ["GAME:0"],        # one of its own
+                legal[:3] + [locked],                       # not learned yet
+                legal[:3] + ["NOPE:0"],                     # not a move
+                "not a list at all"):
+            carried = battles.carried("SHELL", self.SEED, 2, 13, broken)
+            self.assertEqual([battles._identify(move, "SHELL")
+                              for move in carried], default, broken)
+
+    def test_swapping_one_move_for_another(self):
+        current = [battles._identify(move, "SHELL")
+                   for move in battles.moves_for("SHELL", self.SEED, 2)]
+        spare = next(entry["id"] for entry in self.known(level=13, stage=2)
+                     if entry["id"] not in current)
+        wanted, problem = battles.teachable("SHELL", self.SEED, 2, 13,
+                                            current, 3, spare)
+        self.assertEqual(problem, "")
+        self.assertEqual(wanted[3], spare)
+        self.assertEqual(wanted[:3], current[:3])
+
+    def test_what_a_swap_refuses(self):
+        current = [battles._identify(move, "SHELL")
+                   for move in battles.moves_for("SHELL", self.SEED, 2)]
+
+        def refusal(slot, move):
+            wanted, problem = battles.teachable("SHELL", self.SEED, 2, 13,
+                                                current, slot, move)
+            self.assertEqual(wanted, current, "nothing changes on a refusal")
+            self.assertTrue(problem)
+            return problem
+
+        spare = next(entry["id"] for entry in self.known(level=13, stage=2)
+                     if entry["id"] not in current)
+        # For the own-type floor the swap has to be a move of another type;
+        # swapping one of its own for another of its own is always legal.
+        borrowed = next(entry["id"] for entry in self.known(level=13, stage=2)
+                        if entry["id"] not in current
+                        and entry["type"] != "SHELL")
+        locked = next(entry["id"] for entry
+                      in battles.learnset("SHELL", self.SEED, 13, 2)
+                      if not entry["known"])
+
+        refusal(9, spare)                   # no such slot
+        refusal("x", spare)                 # no such slot
+        refusal(0, "NOPE:0")                # no such move
+        refusal(0, "GAME:0")                # not on its list at all
+        self.assertIn("level", refusal(0, locked))      # not learned yet
+        # And the floor: two of its own type, always.
+        own = [index for index, move in enumerate(current)
+               if move.startswith("SHELL:")]
+        self.assertIn("own type", refusal(own[0], borrowed))
+
+    def test_a_creature_fights_with_what_its_record_says(self):
+        window_entry = window("0xdeadbeef", "foot")
+        chosen = self.legal()
+        fighter = battles.creature(window_entry, {"xp": 900, "moves": chosen})
+        self.assertEqual([battles._identify(move, "SHELL")
+                          for move in fighter["moves"]], chosen)
+
+    def test_a_record_naming_moves_it_cannot_reach_still_fights(self):
+        fighter = battles.creature(window("0xdeadbeef", "foot"),
+                                   {"xp": 0, "moves": ["CHAT:2"] * 4})
+        self.assertEqual(len(fighter["moves"]), 4)
+        own = [move for move in fighter["moves"] if move["type"] == "SHELL"]
+        self.assertGreaterEqual(len(own), battles.MIN_OWN_MOVES)
+
+
+class TeachingFromThePanel(unittest.TestCase):
+    """The other thing the panel may write: which four moves are carried."""
+
+    def setUp(self):
+        self.proc = fake_proc(pid=4242, age_seconds=3600.0)
+        self.directory = tempfile.mkdtemp()
+        self.book = creatures.Store(
+            os.path.join(self.directory, "creatures.json"), proc=self.proc)
+        self.window = window("0xdeadbeef", "foot", pid=4242)
+        self.book.award(self.window, xp=900)      # enough to have learned some
+
+    def tearDown(self):
+        shutil.rmtree(self.proc, ignore_errors=True)
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def carried(self):
+        return [move["id"] for move
+                in creatures.roster([self.window], self.book,
+                                    proc=self.proc)[0]["moves"]]
+
+    def spare(self):
+        """Something it knows and is not already carrying."""
+        row = creatures.roster([self.window], self.book, proc=self.proc)[0]
+        carried = {move["id"] for move in row["moves"]}
+        return next(entry["id"] for entry in row["learnset"]
+                    if entry["known"] and entry["id"] not in carried)
+
+    def test_a_taught_move_is_remembered(self):
+        before = self.carried()
+        wanted = self.spare()
+        result = creatures.teach(self.window, 3, wanted, self.book,
+                                 proc=self.proc)
+        self.assertTrue(result["ok"], result["message"])
+        self.assertEqual(self.carried()[3], wanted)
+        self.assertNotEqual(self.carried(), before)
+        # And it survives the store being reopened, like every other record.
+        reopened = creatures.Store(self.book.path, proc=self.proc)
+        self.assertEqual(reopened.record(self.window)["moves"][3], wanted)
+
+    def test_a_refusal_changes_nothing(self):
+        before = self.carried()
+        row = creatures.roster([self.window], self.book, proc=self.proc)[0]
+        locked = next(entry["id"] for entry in row["learnset"]
+                      if not entry["known"])
+        result = creatures.teach(self.window, 3, locked, self.book,
+                                 proc=self.proc)
+        self.assertFalse(result["ok"])
+        self.assertEqual(self.carried(), before)
+        self.assertEqual(self.book.record(self.window)["moves"], [])
+
+    def test_the_refusal_is_named_after_the_creature(self):
+        result = creatures.teach(self.window, 3, "GAME:0", self.book,
+                                 proc=self.proc)
+        self.assertFalse(result["ok"])
+        self.assertIn("FOOT", result["message"])
+
+    def test_the_roster_carries_the_whole_learnset(self):
+        row = creatures.roster([self.window], self.book, proc=self.proc)[0]
+        self.assertTrue(row["learnset"])
+        for entry in row["learnset"]:
+            self.assertIn("known", entry)
+            self.assertIn("at", entry)
+            self.assertIn("id", entry)
+        carried = {move["id"] for move in row["moves"]}
+        known = {entry["id"] for entry in row["learnset"] if entry["known"]}
+        self.assertTrue(carried <= known, "it carries only what it knows")
+
+    def test_teaching_reaches_no_window(self):
+        with open(os.path.join(ROOT, "bin", "battles")) as handle:
+            source = handle.read()
+        body = source[source.index("    def teach(self, address, slot, move):"):
+                      source.index("    def handle_command(self, text):")]
+        for forbidden in ("dispatch", "moves.command", "killactive", "close"):
+            self.assertNotIn(forbidden, body, forbidden)
+
+
+class Hunger(unittest.TestCase):
+    """How much a window can eat, and why an old one can eat more."""
+
+    def test_an_older_window_can_eat_more(self):
+        self.assertLess(battles.appetite(60), battles.appetite(3600))
+        self.assertLess(battles.appetite(3600), battles.appetite(3600 * 8))
+
+    def test_appetite_stops_growing_somewhere(self):
+        self.assertEqual(battles.appetite(3600 * 24 * 30), battles.APPETITE_CAP)
+
+    def test_a_brand_new_window_has_almost_none(self):
+        self.assertEqual(battles.appetite(0), battles.APPETITE_BASE)
+
+    def test_nonsense_uptime_is_a_new_window_rather_than_a_crash(self):
+        for broken in (None, "", "ages", -5):
+            self.assertEqual(battles.appetite(broken), battles.APPETITE_BASE)
+
+    def test_hunger_is_what_is_left_and_never_less_than_nothing(self):
+        self.assertEqual(battles.hunger(3600, 0), battles.appetite(3600))
+        self.assertEqual(battles.hunger(3600, 10 ** 6), 0)
+
+
+def fake_proc(pid=4242, age_seconds=7200.0):
+    """A /proc with one process in it, of whatever age the test wants."""
+    directory = tempfile.mkdtemp()
+    boot = 100000.0
+    with open(os.path.join(directory, "uptime"), "w") as handle:
+        handle.write("%f 0.0\n" % boot)
+    os.makedirs(os.path.join(directory, str(pid)))
+    ticks = os.sysconf("SC_CLK_TCK")
+    started = (boot - age_seconds) * ticks
+    # Everything after the parenthesised comm, so field 22 of the whole line
+    # - the start time - is the twentieth of these.
+    fields = ["0"] * 50
+    fields[0] = "S"
+    fields[19] = "%d" % started
+    with open(os.path.join(directory, str(pid), "stat"), "w") as handle:
+        handle.write("%d (a window) %s\n" % (pid, " ".join(fields)))
+    return directory
+
+
+class TheRecordBook(unittest.TestCase):
+    """What a creature remembers, and what it is remembered under."""
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.path = os.path.join(self.directory, "creatures.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def test_a_creature_is_its_class_and_not_its_address(self):
+        # The whole reason a record can outlive a window: addresses die with
+        # the window and are handed out again, classes do not.
+        self.assertEqual(creatures.species_key(window("0x1", "firefox")),
+                         creatures.species_key(window("0xfeed", "firefox")))
+        self.assertNotEqual(creatures.species_key(window("0x1", "firefox")),
+                            creatures.species_key(window("0x1", "foot")))
+
+    def test_the_launch_class_wins_over_a_window_that_renames_itself(self):
+        renamed = {"initialClass": "firefox", "class": "some site",
+                   "address": "0x1"}
+        self.assertEqual(creatures.species_key(renamed), "firefox")
+
+    def test_a_window_with_no_class_at_all_is_still_somebody(self):
+        self.assertEqual(creatures.species_key({}), "window")
+
+    def test_experience_survives_the_window_closing(self):
+        book = creatures.Store(self.path)
+        book.award(window("0xaaa", "firefox"), xp=120, win=1)
+        reopened = creatures.Store(self.path)
+        record = reopened.record(window("0xbbb", "firefox"))
+        self.assertEqual(record["xp"], 120)
+        self.assertEqual(record["wins"], 1)
+
+    def test_a_record_that_cannot_be_parsed_is_a_fresh_start(self):
+        with open(self.path, "w") as handle:
+            handle.write("{ not json")
+        record = creatures.Store(self.path).record(window())
+        self.assertEqual((record["xp"], record["wins"]), (0, 0))
+
+    def test_an_appetite_belongs_to_the_window_not_the_class(self):
+        proc = fake_proc(pid=4242)
+        try:
+            book = creatures.Store(self.path, proc=proc)
+            book.consume(4242, 30, now=1000.0)
+            self.assertEqual(book.eaten(4242), 30)
+            # A pid nobody can read has no appetite entry, and so cannot eat.
+            self.assertEqual(book.eaten(999999), 0)
+            self.assertIsNone(book.consume(999999, 10))
+        finally:
+            shutil.rmtree(proc, ignore_errors=True)
+
+    def test_an_appetite_is_forgotten_once_the_window_is_gone(self):
+        proc = fake_proc(pid=4242)
+        try:
+            book = creatures.Store(self.path, proc=proc)
+            book.consume(4242, 30, now=1000.0)
+            shutil.rmtree(os.path.join(proc, "4242"))
+            book.save()
+            self.assertEqual(book.appetite, {},
+                             "a dead window keeps nothing")
+        finally:
+            shutil.rmtree(proc, ignore_errors=True)
+
+    def test_an_instance_key_carries_the_start_time(self):
+        proc = fake_proc(pid=4242)
+        try:
+            key = creatures.instance_key(4242, proc)
+            self.assertTrue(key.startswith("4242:"))
+            self.assertNotEqual(key, "4242:")
+        finally:
+            shutil.rmtree(proc, ignore_errors=True)
+
+    def test_uptime_comes_off_proc_and_not_out_of_the_file(self):
+        proc = fake_proc(pid=4242, age_seconds=7200.0)
+        try:
+            self.assertAlmostEqual(creatures.window_uptime(4242, proc),
+                                   7200.0, places=0)
+        finally:
+            shutil.rmtree(proc, ignore_errors=True)
+
+
+class FeedingFromThePanel(unittest.TestCase):
+    """The panel's one power: a meal. Not a window between them."""
+
+    def setUp(self):
+        self.proc = fake_proc(pid=4242, age_seconds=3600.0 * 8)
+        self.directory = tempfile.mkdtemp()
+        self.book = creatures.Store(
+            os.path.join(self.directory, "creatures.json"), proc=self.proc)
+        self.larder = Eating.FakeLarder(servings=40)
+        self.window = window("0x1", "foot", pid=4242)
+
+    def tearDown(self):
+        shutil.rmtree(self.proc, ignore_errors=True)
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def feed(self, key="staple"):
+        return creatures.feed(self.window, key, self.book, self.larder,
+                              now=1000.0, proc=self.proc)
+
+    def test_a_meal_is_experience_and_a_portion_off_the_shelf(self):
+        result = self.feed()
+        self.assertTrue(result["ok"], result["message"])
+        self.assertEqual(self.larder.taken, ["staple"])
+        self.assertEqual(self.book.record(self.window)["xp"],
+                         battles.xp_for_nourish(34))
+        self.assertEqual(self.book.record(self.window)["meals"], 1)
+
+    def test_eating_uses_up_the_window_s_appetite(self):
+        before = battles.hunger(creatures.window_uptime(4242, self.proc),
+                                self.book.eaten(4242))
+        self.feed()
+        after = battles.hunger(creatures.window_uptime(4242, self.proc),
+                               self.book.eaten(4242))
+        self.assertEqual(before - after, 34)
+
+    def test_a_full_window_is_refused_and_nothing_is_taken(self):
+        while self.feed()["ok"]:
+            pass
+        taken = len(self.larder.taken)
+        refusal = self.feed()
+        self.assertFalse(refusal["ok"])
+        self.assertIn("full", refusal["message"])
+        self.assertEqual(len(self.larder.taken), taken,
+                         "a refusal costs the machine nothing")
+
+    def test_a_bare_shelf_is_refused_without_costing_an_appetite(self):
+        self.larder.shelf["servings"] = 0
+        eaten = self.book.eaten(4242)
+        refusal = self.feed()
+        self.assertFalse(refusal["ok"])
+        self.assertEqual(self.book.eaten(4242), eaten)
+
+    def test_a_window_that_cannot_be_identified_cannot_be_fed(self):
+        result = creatures.feed(window("0x1", "foot"), "staple", self.book,
+                                self.larder, proc=self.proc)
+        self.assertFalse(result["ok"])
+        self.assertEqual(self.larder.taken, [])
+
+    def test_food_that_does_not_exist_is_a_sentence_not_a_crash(self):
+        self.assertFalse(self.feed("caviar")["ok"])
+
+    def test_enough_meals_level_it_up_and_then_evolve_it(self):
+        levels = 0
+        evolved = 0
+        # Feeding is gated by appetite, so age the window between meals the
+        # way a real one ages: this is the only thing that lets it keep
+        # eating, which is the rule under test.
+        for round_number in range(60):
+            self.book.appetite = {}
+            result = self.feed()
+            if not result["ok"]:
+                break
+            levels += 1 if result["leveled"] else 0
+            evolved += 1 if result["evolved"] else 0
+        self.assertGreater(levels, 0)
+        self.assertGreater(evolved, 0, "feeding eventually evolves it")
+
+    def test_feeding_never_reaches_for_a_window(self):
+        # The panel can read every window on the machine and change a record.
+        # It must never be able to move, close or focus one.
+        with open(os.path.join(ROOT, "lib", "creatures.py")) as handle:
+            source = handle.read()
+        for forbidden in ("subprocess", "dispatch", "hyprctl", "socket",
+                          "os.kill", "unlink", "rmtree"):
+            self.assertNotIn(forbidden, source, forbidden)
+
+
+class SleepingWindows(unittest.TestCase):
+    """What is left of a creature once its window is shut."""
+
+    def setUp(self):
+        self.proc = fake_proc(pid=4242, age_seconds=3600.0)
+        self.directory = tempfile.mkdtemp()
+        self.book = creatures.Store(
+            os.path.join(self.directory, "creatures.json"), proc=self.proc)
+        self.open_window = window("0x1", "foot", pid=4242)
+        self.book.award(self.open_window, xp=200)
+        self.book.award(window("0x2", "kitty"), xp=900, win=3)
+        self.book.award(window("0x3", "mpv"), xp=90, loss=1)
+
+    def tearDown(self):
+        shutil.rmtree(self.proc, ignore_errors=True)
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def asleep(self):
+        return creatures.sleeping([self.open_window], self.book)
+
+    def test_a_shut_window_is_still_a_creature(self):
+        names = [row["key"] for row in self.asleep()]
+        self.assertIn("kitty", names)
+        self.assertIn("mpv", names)
+        self.assertNotIn("foot", names, "that one is open")
+
+    def test_it_keeps_what_it_earned(self):
+        kitty = next(row for row in self.asleep() if row["key"] == "kitty")
+        self.assertEqual(kitty["wins"], 3)
+        self.assertGreater(kitty["level"], battles.BASE_LEVEL)
+        self.assertEqual(len(kitty["moves"]), battles.CARRIED_MOVES)
+        self.assertTrue(kitty["learnset"])
+
+    def test_it_has_no_appetite_because_it_has_no_window(self):
+        for row in self.asleep():
+            self.assertEqual(row["appetite"], 0)
+            self.assertEqual(row["hunger"], 0)
+            self.assertFalse(row["canFeed"])
+            self.assertTrue(row["sleeping"])
+            self.assertFalse(row["canEvolveNow"], "nothing happens while shut")
+
+    def test_the_most_recently_open_is_first(self):
+        rows = self.asleep()
+        self.assertEqual([row["key"] for row in rows], ["mpv", "kitty"]
+                         if rows[0]["seen"] >= rows[1]["seen"] else ["kitty", "mpv"])
+        self.assertGreaterEqual(rows[0]["seen"], rows[1]["seen"])
+
+    def test_nothing_happens_to_it_while_it_sleeps(self):
+        before = json.load(open(self.book.path))
+        for _ in range(3):
+            self.asleep()
+        self.assertEqual(json.load(open(self.book.path)), before)
+
+    def test_it_answers_to_the_name_it_is_remembered_under(self):
+        found = creatures.find("kitty", [self.open_window], self.book)
+        self.assertEqual(creatures.species_key(found), "kitty")
+        self.assertEqual(found.get("address"), "")
+        # A live one still answers to its address, and nothing else answers
+        # at all.
+        self.assertEqual(creatures.find("0x1", [self.open_window], self.book),
+                         self.open_window)
+        self.assertIsNone(creatures.find("nobody", [self.open_window], self.book))
+
+    def test_it_cannot_be_fed_and_the_refusal_says_why(self):
+        larder = Eating.FakeLarder(servings=4)
+        found = creatures.find("kitty", [self.open_window], self.book)
+        result = creatures.feed(found, "staple", self.book, larder,
+                                proc=self.proc)
+        self.assertFalse(result["ok"])
+        self.assertIn("closed", result["message"])
+        self.assertEqual(larder.taken, [], "a refusal costs nothing")
+
+    def test_its_moves_can_still_be_changed(self):
+        # Moves belong to the class, not to the process: picking a loadout
+        # for something you are about to open is the point of this screen.
+        found = creatures.find("kitty", [self.open_window], self.book)
+        row = next(one for one in self.asleep() if one["key"] == "kitty")
+        carried = {move["id"] for move in row["moves"]}
+        spare = next(entry["id"] for entry in row["learnset"]
+                     if entry["known"] and entry["id"] not in carried)
+        result = creatures.teach(found, 3, spare, self.book, proc=self.proc)
+        self.assertTrue(result["ok"], result["message"])
+        again = next(one for one in self.asleep() if one["key"] == "kitty")
+        self.assertEqual(again["moves"][3]["id"], spare)
+
+
+class TheRoster(unittest.TestCase):
+    """Every open window as a creature, for the bar panel."""
+
+    def setUp(self):
+        self.proc = fake_proc(pid=4242, age_seconds=3600.0 * 4)
+        self.directory = tempfile.mkdtemp()
+        self.book = creatures.Store(
+            os.path.join(self.directory, "creatures.json"), proc=self.proc)
+        self.larder = Eating.FakeLarder(servings=4)
+
+    def tearDown(self):
+        shutil.rmtree(self.proc, ignore_errors=True)
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def rows(self, clients):
+        return creatures.roster(clients, self.book, self.larder,
+                                proc=self.proc)
+
+    def test_every_window_is_a_creature(self):
+        rows = self.rows([window("0x1", "foot", pid=4242),
+                          window("0x2", "firefox", pid=4242)])
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(sorted(row["type"] for row in rows),
+                         ["NET", "SHELL"])
+        for row in rows:
+            self.assertEqual(row["level"], battles.BASE_LEVEL)
+            self.assertGreater(row["appetite"], 0)
+
+    def test_the_hungriest_is_at_the_top(self):
+        # A four-hour-old window that has eaten its fill has less room left
+        # than a brand new one that has eaten nothing, small as a new one's
+        # appetite is - which is the order somebody feeding wants.
+        rows = self.rows([window("0x1", "foot", pid=4242),
+                          window("0x2", "firefox")])
+        self.assertEqual(rows[0]["address"], "0x1")
+        self.book.consume(4242, battles.appetite(3600 * 4) - 1, now=1000.0)
+        rows = self.rows([window("0x1", "foot", pid=4242),
+                          window("0x2", "firefox")])
+        self.assertEqual(rows[0]["address"], "0x2",
+                         "the full one drops below the empty one")
+
+    def test_a_window_with_no_readable_process_cannot_be_fed(self):
+        rows = self.rows([window("0x1", "foot")])
+        self.assertFalse(rows[0]["canFeed"])
+
+    def test_rubbish_in_the_window_list_is_skipped(self):
+        rows = self.rows([None, "not a window", window("0x1", "foot")])
+        self.assertEqual(len(rows), 1)
+
+    def test_the_dot_only_lights_for_something_one_meal_away(self):
+        # The bar icon's notification dot. It has to be true only when a
+        # click would actually achieve something, or it is noise.
+        rows = self.rows([window("0x1", "foot", pid=4242)])
+        self.assertGreater(rows[0]["xpToEvolve"], 0)
+        self.assertFalse(rows[0]["canEvolveNow"], "a beginner is not close")
+
+        # One portion short of the first threshold, with that portion on the
+        # shelf and the appetite to eat it.
+        nourish = self.larder.shelf["nourish"]
+        threshold = battles.xp_for_level(battles.STAGE_LEVELS[1])
+        self.book.award(window("0x1", "foot"),
+                        xp=threshold - battles.xp_for_nourish(nourish))
+        rows = self.rows([window("0x1", "foot", pid=4242)])
+        self.assertTrue(rows[0]["canEvolveNow"])
+
+        # The same creature, with the machine's shelves bare.
+        self.larder.shelf["servings"] = 0
+        rows = self.rows([window("0x1", "foot", pid=4242)])
+        self.assertFalse(rows[0]["canEvolveNow"],
+                         "nothing to feed it is nothing to ask for")
+
+    def test_a_creature_with_nothing_left_to_evolve_into_never_asks(self):
+        self.book.award(window("0x1", "foot"), xp=10 ** 6)
+        rows = self.rows([window("0x1", "foot", pid=4242)])
+        self.assertEqual(rows[0]["xpToEvolve"], 0)
+        self.assertFalse(rows[0]["canEvolveNow"])
+
+    def test_the_panel_can_only_read_and_feed(self):
+        # The bar panel is drawing and asking, like the battle screen. If it
+        # ever learns to dispatch, a click in a menu could move a window.
+        with open(os.path.join(ROOT, "Roster.qml")) as handle:
+            source = handle.read()
+        for forbidden in ("hyprctl", "dispatch", "killactive", "closewindow",
+                          "movetoworkspace", "fullscreen"):
+            self.assertNotIn(forbidden, source, forbidden)
+        # And the only two things it is allowed to run.
+        for command in re.findall(r'controlCommand, "([a-z]+)"', source):
+            self.assertIn(command, ("roster", "feed", "teach", "toggle"))
+
+
+class Evolving(unittest.TestCase):
+    """The other thing the overlay can be asked to draw."""
+
+    def scene(self, stage=2, now=0.0):
+        creature = battles.creature(window("0x1", "firefox"), {"xp": 4000})
+        return battles.Evolution(creature, stage, now)
+
+    def test_it_runs_itself_through_three_beats_and_stops(self):
+        scene = self.scene()
+        self.assertEqual(scene.phase, "intro")
+        clock = 0.0
+        seen = [scene.phase]
+        for _ in range(20):
+            clock += 0.5
+            if scene.tick(clock):
+                seen.append(scene.phase)
+            if scene.finished(clock):
+                break
+        self.assertEqual(seen, ["intro", "shift", "done", "over"])
+        self.assertTrue(scene.finished(clock))
+
+    def test_it_says_what_it_was_and_what_it_became(self):
+        scene = self.scene()
+        self.assertEqual(scene.before, "FIREFOX")
+        self.assertTrue(scene.after.endswith("FIREFOX"))
+        self.assertNotEqual(scene.before, scene.after)
+        self.assertIn(scene.before, scene.snapshot()["message"] or " ")
+
+    def test_the_name_only_changes_when_the_flash_is_over(self):
+        scene = self.scene()
+        self.assertEqual(scene.snapshot()["player"]["name"], scene.before)
+        scene.advance(1.0)
+        scene.advance(2.0)
+        self.assertEqual(scene.phase, "done")
+        self.assertEqual(scene.snapshot()["player"]["name"], scene.after)
+
+    def test_skipping_it_costs_the_picture_and_not_the_level(self):
+        # The record is written before the scene is built, so an escape here
+        # can only ever lose the animation.
+        scene = self.scene()
+        self.assertTrue(scene.flee(1.0))
+        self.assertTrue(scene.finished(1.0))
+        self.assertEqual(scene.snapshot()["player"]["stage"], 2)
+
+    def test_it_cannot_run_forever(self):
+        scene = self.scene()
+        scene.tick(10 ** 6)
+        for _ in range(5):
+            scene.tick(10 ** 6)
+        self.assertTrue(scene.finished(10 ** 6))
+
+    def test_the_overlay_is_told_which_of_the_two_scenes_it_is(self):
+        self.assertEqual(self.scene().snapshot()["scene"], "evolve")
+        fight = battles.Battle(battles.creature(window("0x1")),
+                               battles.creature(window("0x2", "firefox")), 0.0)
+        self.assertEqual(fight.snapshot()["scene"], "battle")
+
+    def test_an_evolution_holds_nothing_and_moves_nothing(self):
+        # It borrows the screen for eight seconds. It must not borrow the pad,
+        # the bar, or a window.
+        with open(os.path.join(ROOT, "bin", "battles")) as handle:
+            source = handle.read()
+        body = source[source.index("    def evolve(self, window, evolved, now):"):
+                      source.index("    def tick_scene(self, now):")]
+        for forbidden in ("dispatch", "set_bar", "pad.grab", "moves.command"):
+            self.assertNotIn(forbidden, body, forbidden)
+
+
+class WhatABattleIsWorth(unittest.TestCase):
+    """The daemon writing a finished battle down."""
+
+    def daemon(self):
+        daemon = bd.Daemon.__new__(bd.Daemon)
+        daemon.creatures = store()
+        daemon.scene = None
+        daemon.battle = None
+        daemon.effects = FakeSound()
+        daemon.publish = lambda: None
+        daemon.monitor_name = lambda client: "DP-1"
+        return daemon
+
+    def fight(self, result):
+        fight = type("Fight", (), {})()
+        fight.result = result
+        fight.direction = "left"
+        fight.player = {"name": "FOOT", "level": 8}
+        fight.foe = {"name": "FIREFOX", "level": 8}
+        fight.challenger_window = window("0x1", "foot")
+        fight.defender_window = window("0x2", "firefox")
+        return fight
+
+    def test_both_sides_are_written_down(self):
+        daemon = self.daemon()
+        daemon.award(self.fight("win"), 0.0)
+        winner = daemon.creatures.record(window("0x1", "foot"))
+        loser = daemon.creatures.record(window("0x2", "firefox"))
+        self.assertEqual((winner["wins"], winner["losses"]), (1, 0))
+        self.assertEqual((loser["wins"], loser["losses"]), (0, 1))
+        self.assertGreater(winner["xp"], loser["xp"])
+
+    def test_a_flee_is_worth_nothing_to_anybody(self):
+        daemon = self.daemon()
+        daemon.award(self.fight("draw"), 0.0)
+        self.assertEqual(daemon.creatures.record(window("0x1", "foot"))["xp"], 0)
+
+    def test_enough_wins_put_an_evolution_on_screen(self):
+        daemon = self.daemon()
+        for _ in range(40):
+            daemon.award(self.fight("win"), 0.0)
+            if daemon.scene:
+                break
+        self.assertIsNotNone(daemon.scene, "winning evolves a creature too")
+        self.assertEqual(daemon.scene.snapshot()["scene"], "evolve")
+
+    def test_a_battle_takes_the_screen_back_from_an_evolution(self):
+        with open(os.path.join(ROOT, "bin", "battles")) as handle:
+            source = handle.read()
+        body = source[source.index("        self.battle = fight"):]
+        self.assertIn("self.scene = None", body[:200],
+                      "a battle starting clears any evolution on screen")
 
 
 class Music(unittest.TestCase):

@@ -143,6 +143,32 @@ def _seed_of(address):
                    for index, character in enumerate(str(address or "?")))
 
 
+def species_key(window):
+    """The name a creature is remembered under: its launch class, folded.
+
+    Also what its stats are hung off. It used to be the window's address, and
+    that was wrong in a way that only showed up once records outlived their
+    windows: Hyprland hands out a fresh address on every launch, so a creature
+    kept its level across a restart and shuffled its attack, its HP and the
+    order it learns moves in. A class does not change, so now none of them do.
+    """
+    window = window or {}
+    for field in ("initialClass", "class"):
+        value = str(window.get(field) or "").strip().lower()
+        if value:
+            return value
+    return "window"
+
+
+def key_seed(key):
+    """A species key as a number, deterministically - `hash()` is salted per
+    process and would re-roll every creature on every restart."""
+    seed = 0x811C9DC5
+    for character in str(key or "window"):
+        seed = ((seed ^ ord(character)) * 0x01000193) & 0xFFFFFFFF
+    return seed
+
+
 def display_name(window):
     """A creature name from the window, uppercase and short enough to fit.
 
@@ -161,64 +187,446 @@ def display_name(window):
     return "WINDOW"
 
 
-def level_of(window):
-    """Bigger windows are higher level. Screen real estate is the only
-    currency a window has, so it is the one the level is bought with."""
+def size_bonus(window):
+    """What a window's size is worth, which is not a lot on purpose.
+
+    Screen area used to be the whole level, and it was unfair: a window that
+    refuses to be fullscreened, a 4K monitor against a laptop panel and two
+    layouts that tile differently all handed out levels nobody earned. Levels
+    are fed and fought for now (see `progress`), and size is left as the small
+    sturdiness bonus it deserves to be - a big window is roomier, not better.
+    """
     size = window.get("size") or [800, 600]
     try:
         width, height = max(1, int(size[0])), max(1, int(size[1]))
     except (TypeError, ValueError, IndexError):
         width, height = 800, 600
-    return max(3, min(40, 3 + int(math.sqrt(width * height) / 100)))
+    return max(0, min(SIZE_BONUS_CAP, int(math.sqrt(width * height) / 160)))
 
 
-def creature(window):
-    """Turn one `hyprctl clients` entry into a fighter."""
+# ------------------------------------------------------------- progression
+#
+# A creature is its window class, and a class is remembered (lib/creatures.py)
+# so a level survives closing the window. Everything below is the arithmetic
+# of that: what experience buys, when it evolves, and how much a window can
+# still eat today. All of it pure - the record comes in as a dict.
+
+BASE_LEVEL = 5              # where a window nobody has ever fed starts
+MAX_LEVEL = 50
+SIZE_BONUS_CAP = 12
+
+XP_FIRST = 40               # the first level up costs this,
+XP_STEP = 20                # and each one after it costs this much more.
+
+XP_PER_NOURISH = 2          # feeding: a portion's nourishment, doubled
+XP_WIN_BASE = 20            # winning: the loser's level is the prize
+XP_WIN_PER_LEVEL = 6
+XP_LOSS_BASE = 5            # losing teaches you something, just not much
+XP_LOSS_PER_LEVEL = 1
+
+# Evolution is automatic, at a level. Two thresholds, so a creature that is
+# fed steadily goes through both in a week rather than a year.
+STAGE_LEVELS = (0, 12, 25)
+
+# What an evolved creature is called. The window keeps its own name - it is
+# still your terminal - and earns a word in front of it, drawn from what its
+# type is good at. Nothing here is borrowed from anybody's monsters.
+STAGE_TITLES = {
+    "SHELL": ("", "SUPER", "ROOT"),
+    "CODE": ("", "SMART", "PRIME"),
+    "NET": ("", "FAST", "HYPER"),
+    "CHAT": ("", "LOUD", "OMNI"),
+    "MEDIA": ("", "RICH", "ULTRA"),
+    "GAME": ("", "PRO", "LEGEND"),
+    "GLASS": ("", "CLEAR", "CRYSTAL"),
+}
+
+NAME_WIDTH = 12             # what the name plate can draw without clipping
+
+
+def progress(xp):
+    """Experience as a place on the ladder.
+
+    Returns (level, into, needed): the level it buys, how far past it the
+    experience is, and what the next one costs. The cost grows with every
+    level, so the ladder gets slower rather than stopping, and it stops
+    entirely at MAX_LEVEL.
+    """
+    try:
+        remaining = max(0, int(xp))
+    except (TypeError, ValueError):
+        remaining = 0
+    level = BASE_LEVEL
+    needed = XP_FIRST
+    while level < MAX_LEVEL and remaining >= needed:
+        remaining -= needed
+        level += 1
+        needed += XP_STEP
+    if level >= MAX_LEVEL:
+        return MAX_LEVEL, 0, 0
+    return level, remaining, needed
+
+
+def xp_for_level(level):
+    """The experience a creature needs in total to reach a level."""
+    target = max(BASE_LEVEL, min(MAX_LEVEL, int(level)))
+    total = 0
+    needed = XP_FIRST
+    for _ in range(BASE_LEVEL, target):
+        total += needed
+        needed += XP_STEP
+    return total
+
+
+def xp_to_next_stage(xp):
+    """How much more experience this creature needs before it evolves.
+
+    Zero once there is nothing left to evolve into, which is what lets a
+    caller ask "is this one close?" without knowing the thresholds.
+    """
+    level = progress(xp)[0]
+    for threshold in STAGE_LEVELS[1:]:
+        if level < threshold:
+            return max(0, xp_for_level(threshold) - max(0, int(xp or 0)))
+    return 0
+
+
+def stage_for_level(level):
+    """Which of the three stages a level is in: 1, 2 or 3."""
+    stage = 1
+    for index, threshold in enumerate(STAGE_LEVELS):
+        if level >= threshold:
+            stage = index + 1
+    return stage
+
+
+def evolved_name(name, kind, stage):
+    """The creature's name at a stage, cut to what the plate can draw."""
+    titles = STAGE_TITLES.get(kind) or STAGE_TITLES["GLASS"]
+    title = titles[max(0, min(len(titles), stage) - 1)]
+    base = str(name or "WINDOW")
+    if not title:
+        return base[:NAME_WIDTH]
+    room = NAME_WIDTH - len(title) - 1
+    if room < 3:
+        return base[:NAME_WIDTH]
+    return ("%s %s" % (title, base[:room]))[:NAME_WIDTH]
+
+
+def xp_for_nourish(nourish):
+    """What one portion of food is worth as experience."""
+    return max(0, int(nourish)) * XP_PER_NOURISH
+
+
+def xp_for_result(result, foe_level):
+    """What a finished battle is worth. A fled battle is worth nothing, the
+    way walking away from one always has been."""
+    level = max(1, int(foe_level or 1))
+    if result == "win":
+        return XP_WIN_BASE + XP_WIN_PER_LEVEL * level
+    if result == "loss":
+        return XP_LOSS_BASE + XP_LOSS_PER_LEVEL * level
+    return 0
+
+
+# Hunger
+#
+# How much a window can eat is bought with how long it has been open, and
+# nothing else. A window opened a minute ago is a hatchling with no appetite;
+# one that has been up since this morning can take a proper meal. Uptime comes
+# off /proc rather than out of a file this plugin wrote, so closing the panel,
+# restarting the daemon or editing the ledger cannot fake it - and reopening
+# the window resets the appetite honestly, because that really is a new window.
+APPETITE_BASE = 20
+APPETITE_PER_HOUR = 18
+APPETITE_CAP = 200
+
+
+def appetite(uptime_seconds):
+    """How much nourishment a window this old can hold, all told."""
+    try:
+        hours = max(0.0, float(uptime_seconds)) / 3600.0
+    except (TypeError, ValueError):
+        hours = 0.0
+    return int(min(APPETITE_CAP, APPETITE_BASE + APPETITE_PER_HOUR * hours))
+
+
+def hunger(uptime_seconds, eaten):
+    """How much it can still eat right now: appetite less what it has had."""
+    try:
+        taken = max(0, int(eaten))
+    except (TypeError, ValueError):
+        taken = 0
+    return max(0, appetite(uptime_seconds) - taken)
+
+
+def creature(window, record=None):
+    """Turn one `hyprctl clients` entry into a fighter.
+
+    `record` is what the window's class has earned so far (lib/creatures.py):
+    experience, and the wins and losses behind it. Without one - a test, a
+    first sighting, a store that cannot be read - the creature is simply a
+    beginner at BASE_LEVEL, which is what every creature was once.
+    """
     window = window or {}
-    seed = _seed_of(window.get("address"))
+    record = record or {}
+    # Hung off what the creature *is*, not off the window it happens to be in
+    # today: see species_key.
+    seed = key_seed(species_key(window))
     kind = type_of(window.get("initialClass") or window.get("class"))
-    level = level_of(window)
+    level, into, needed = progress(record.get("xp", 0))
+    stage = stage_for_level(level)
+    bonus = size_bonus(window)
 
+    # Level does the work; the seed only decides what this particular class is
+    # naturally good at, and the stage is the bump evolution is worth.
     return {
         "address": str(window.get("address") or ""),
-        "name": display_name(window),
+        "name": evolved_name(display_name(window), kind, stage),
+        "baseName": display_name(window),
         "type": kind,
         "level": level,
+        "stage": stage,
+        "xp": max(0, int(record.get("xp", 0) or 0)),
+        "xpInto": into,
+        "xpNeeded": needed,
+        "wins": max(0, int(record.get("wins", 0) or 0)),
+        "losses": max(0, int(record.get("losses", 0) or 0)),
         # Roomy on purpose: a fight that ends in three hits is over before
         # the HP bar has finished moving, and the bar is half the fun.
-        "maxHp": 80 + level * 3 + seed % 24,
-        "hp": 80 + level * 3 + seed % 24,
-        "attack": 12 + level + (seed >> 4) % 14,
-        "defense": 10 + level + (seed >> 8) % 14,
-        "speed": 10 + level + (seed >> 12) % 18,
-        "moves": moves_for(kind, seed),
+        "maxHp": 70 + level * 4 + bonus * 2 + seed % 24,
+        "hp": 70 + level * 4 + bonus * 2 + seed % 24,
+        "attack": 10 + level + stage * 3 + (seed >> 4) % 12,
+        "defense": 9 + level + bonus + (seed >> 8) % 12,
+        "speed": 10 + level + (seed >> 12) % 16,
+        "moves": carried(kind, seed, stage, level, record.get("moves")),
     }
 
 
-def moves_for(kind, seed):
-    """Four moves: two of the creature's own type, two borrowed.
+def moves_for(kind, seed, stage=1):
+    """Four moves: mostly the creature's own type, the rest borrowed.
 
-    Two of its own keeps the same-type bonus reachable every turn; two
-    borrowed means a bad type matchup is something you can play around
-    instead of something you simply lose.
+    Its own keeps the same-type bonus reachable every turn; the borrowed ones
+    mean a bad type matchup is something you can play around instead of
+    something you simply lose.
+
+    Evolving changes what it may reach for. The moves in each type are listed
+    weakest first, and a stage-1 creature is not allowed the last of them - a
+    beginner does not get to open with the 85. Stage 2 unlocks it; stage 3
+    knows all three of its own type and borrows only once, which is what
+    finally makes the evolved form fight differently rather than just harder.
     """
     own = list(MOVES.get(kind) or MOVES["GLASS"])
-    first = seed % len(own)
-    second = (seed // 3 + 1) % len(own)
-    # Two of its own, and they have to be two different ones. Indices are
-    # compared rather than the dicts, which are copies with a type added and
-    # so are never found in the pool they came from.
-    if second == first:
-        second = (first + 1) % len(own)
-    picked = [dict(own[first], type=kind), dict(own[second], type=kind)]
+    stage = max(1, min(3, int(stage or 1)))
+
+    if stage >= 3:
+        picked = [dict(move, type=kind) for move in own]
+        borrowed = 1
+    else:
+        pool = own if stage >= 2 else own[:-1]
+        first = seed % len(pool)
+        # Two of its own, and they have to be two different ones. Indices are
+        # compared rather than the dicts, which are copies with a type added
+        # and so are never found in the pool they came from.
+        second = (seed // 3 + 1) % len(pool)
+        if second == first:
+            second = (first + 1) % len(pool)
+        picked = [dict(pool[first], type=kind), dict(pool[second], type=kind)]
+        borrowed = 2
 
     others = [other for other in TYPES if other != kind]
-    for step in range(2):
+    for step in range(borrowed):
         borrowed_type = others[(seed >> (5 * (step + 1))) % len(others)]
         pool = MOVES[borrowed_type]
         picked.append(dict(pool[(seed >> (3 * (step + 1))) % len(pool)],
                            type=borrowed_type))
     return picked
+
+
+# ----------------------------------------------------------- the learnset
+#
+# Four moves are carried; more than four are known. A creature learns its own
+# type's moves by evolving (see `moves_for`) and borrows the rest one at a
+# time as it levels, which is what a level between two evolutions is for -
+# before this, a level was three numbers going up and nothing to decide.
+#
+# The order is the creature's own: it comes off the same address seed the
+# stats do, so your terminal always learns the same things in the same order
+# and no two classes have the same list. None of this is stored here - the
+# chosen four live in the record (lib/creatures.py) and are handed back in.
+
+MOVE_UNLOCK_LEVELS = (8, 13, 18, 24, 30)
+CARRIED_MOVES = 4
+MIN_OWN_MOVES = 2           # the type ring only means something if it is met
+
+
+def move_id(kind, index):
+    """A move's name in a record: its type and its place in that type's
+    list, which is stable in a way a printed name is not."""
+    return "%s:%d" % (kind, int(index))
+
+
+def move_by_id(identifier):
+    """The move one of those names refers to, or None."""
+    kind, _, index = str(identifier or "").partition(":")
+    pool = MOVES.get(kind.upper())
+    if not pool:
+        return None
+    try:
+        position = int(index)
+    except ValueError:
+        return None
+    if not 0 <= position < len(pool):
+        return None
+    return dict(pool[position], type=kind.upper(), id=move_id(kind.upper(),
+                                                              position))
+
+
+def _borrowed_order(kind, seed):
+    """Every move this creature could ever borrow, in the order it learns
+    them. The two it starts with come first, so the moves it was born with
+    are always ones it knows."""
+    starters = [move for move in moves_for(kind, seed) if move["type"] != kind]
+    order, seen = [], set()
+    for move in starters:
+        identifier = move_id(move["type"], MOVES[move["type"]].index(
+            next(other for other in MOVES[move["type"]]
+                 if other["name"] == move["name"])))
+        if identifier not in seen:
+            seen.add(identifier)
+            order.append(identifier)
+
+    rest = [move_id(other, index)
+            for other in TYPES if other != kind
+            for index in range(len(MOVES[other]))]
+    rest = [identifier for identifier in rest if identifier not in seen]
+    random.Random(seed ^ 0x5EED).shuffle(rest)
+    return order + rest
+
+
+def learnset(kind, seed, level, stage):
+    """Everything this creature knows, and what it has yet to learn.
+
+    Locked moves are listed too, with the level they arrive at: a list that
+    only shows what you have is a list that never tells you to keep going.
+    """
+    kind = kind if kind in MOVES else "GLASS"
+    stage = max(1, min(3, int(stage or 1)))
+    level = max(0, int(level or 0))
+
+    known = []
+    own = MOVES[kind]
+    # Its own type arrives with evolution, exactly as `moves_for` gates it.
+    reachable = len(own) if stage >= 2 else len(own) - 1
+    for index in range(len(own)):
+        known.append({
+            "id": move_id(kind, index),
+            "name": own[index]["name"],
+            "type": kind,
+            "power": own[index]["power"],
+            "accuracy": own[index]["accuracy"],
+            "known": index < reachable,
+            "at": 0 if index < reachable else STAGE_LEVELS[1],
+        })
+
+    borrowed = _borrowed_order(kind, seed)
+    for position, identifier in enumerate(borrowed[:2 + len(MOVE_UNLOCK_LEVELS)]):
+        move = move_by_id(identifier)
+        if not move:
+            continue
+        needed = 0 if position < 2 else MOVE_UNLOCK_LEVELS[position - 2]
+        known.append({
+            "id": identifier,
+            "name": move["name"],
+            "type": move["type"],
+            "power": move["power"],
+            "accuracy": move["accuracy"],
+            "known": level >= needed,
+            "at": needed,
+        })
+    return known
+
+
+def carried(kind, seed, stage, level, chosen=None):
+    """The four moves a creature actually fights with.
+
+    `chosen` is what the record says. It is used only if it is a real choice:
+    four moves, all of them learned, at least two of them the creature's own.
+    Anything else - an empty record, a move it has forgotten how to reach
+    after nothing, a hand-edited file - falls back to the four it would have
+    had anyway, so a broken record costs a preference and never a fighter.
+    """
+    default = moves_for(kind, seed, stage)
+    if not chosen:
+        return default
+
+    allowed = {entry["id"] for entry in learnset(kind, seed, level, stage)
+               if entry["known"]}
+    picked, seen = [], set()
+    for identifier in chosen:
+        identifier = str(identifier)
+        if identifier in seen or identifier not in allowed:
+            return default
+        move = move_by_id(identifier)
+        if not move:
+            return default
+        seen.add(identifier)
+        picked.append(move)
+
+    if len(picked) != CARRIED_MOVES:
+        return default
+    if sum(1 for move in picked if move["type"] == kind) < MIN_OWN_MOVES:
+        return default
+    return picked
+
+
+def teachable(kind, seed, stage, level, chosen, slot, identifier, name=None):
+    """Swap one carried move for another. Returns (moves, message).
+
+    The message is empty when it worked and a plain sentence when it did not;
+    nothing here raises, because every refusal is something to show somebody.
+    """
+    name = name or kind
+    current = [move["id"] if "id" in move else _identify(move, kind)
+               for move in carried(kind, seed, stage, level, chosen)]
+    try:
+        slot = int(slot)
+    except (TypeError, ValueError):
+        return current, "There is no such slot."
+    if not 0 <= slot < CARRIED_MOVES:
+        return current, "There is no such slot."
+
+    move = move_by_id(identifier)
+    if not move:
+        return current, "There is no such move."
+    entry = next((one for one in learnset(kind, seed, level, stage)
+                  if one["id"] == move["id"]), None)
+    if not entry:
+        return current, "%s cannot learn that." % name
+    if not entry["known"]:
+        return current, ("%s learns %s at level %d."
+                         % (name, move["name"], entry["at"])
+                         if entry["at"] else "%s has not learned that yet." % name)
+    if move["id"] in current and current[slot] != move["id"]:
+        return current, "It already knows that one."
+
+    wanted = list(current)
+    wanted[slot] = move["id"]
+    if sum(1 for one in wanted
+           if str(one).split(":")[0] == kind) < MIN_OWN_MOVES:
+        return current, ("It has to keep %d moves of its own type."
+                         % MIN_OWN_MOVES)
+    return wanted, ""
+
+
+def _identify(move, kind):
+    """The id of a move dict that came out of `moves_for`, which does not
+    carry one."""
+    pool = MOVES.get(move.get("type") or kind) or ()
+    for index, other in enumerate(pool):
+        if other["name"] == move.get("name"):
+            return move_id(move.get("type") or kind, index)
+    return move_id(kind, 0)
 
 
 def damage(attacker, defender, move, rng):
@@ -769,6 +1177,7 @@ class Battle:
         """Everything the overlay draws, and nothing it does not."""
         return {
             "active": True,
+            "scene": "battle",
             "phase": self.phase,
             "result": self.result,
             "message": self.message,
@@ -808,9 +1217,118 @@ def _side(fighter):
         "name": fighter["name"],
         "type": fighter["type"],
         "level": fighter["level"],
+        "stage": fighter.get("stage", 1),
         "hp": fighter["hp"],
         "maxHp": fighter["maxHp"],
     }
+
+
+# ---------------------------------------------------------------- evolving
+#
+# The other thing the overlay can be asked to draw. It is not a battle - no
+# turns, no menus, nothing to play - so it is not a Battle with the fighting
+# taken out; it is its own small state machine with the same shape (tick,
+# advance, finished, snapshot) so the daemon drives both the same way.
+#
+# It runs on screen because a level that goes up in a file nobody opens is
+# not a reward. The window itself is the picture, exactly as in a battle.
+
+EVOLVE_INTRO = 2.0          # "...is evolving!"
+EVOLVE_SHIFT = 2.6          # the long bright beat where it changes
+EVOLVE_DONE = 3.0           # "...evolved into ...!"
+
+
+class Evolution:
+    """One creature crossing a stage threshold, as three beats on screen."""
+
+    def __init__(self, creature_before, stage, now, monitor=""):
+        self.creature = creature_before
+        self.stage = max(2, min(3, int(stage)))
+        self.monitor = monitor
+        # The creature handed in is already the evolved one - the record was
+        # written before the picture was drawn, so an escape mid-animation
+        # cannot lose the level. Both names are rebuilt from its base name,
+        # which is the window's own and does not change with the stage.
+        base = creature_before.get("baseName") or creature_before.get("name")
+        kind = creature_before.get("type")
+        self.before = evolved_name(base, kind, self.stage - 1)
+        self.after = evolved_name(base, kind, self.stage)
+        self.phase = "intro"
+        self.effect = "evolve-intro"
+        self.message = "What? %s is evolving!" % self.before
+        self.seq = 1
+        self.next_at = now + EVOLVE_INTRO
+        self.ends_at = now + EVOLVE_INTRO + EVOLVE_SHIFT + EVOLVE_DONE + 1.0
+        self.closed_at = None
+
+    @property
+    def active(self):
+        return self.phase != "over" or self.closed_at is not None
+
+    def advance(self, now):
+        """Move to the next beat. Returns True when anything changed."""
+        if self.phase == "intro":
+            self.phase = "shift"
+            self.effect = "evolve-shift"
+            # The line stays up through the flash. An empty text box under a
+            # creature that is changing shape reads as something breaking.
+            self.next_at = now + EVOLVE_SHIFT
+        elif self.phase == "shift":
+            self.phase = "done"
+            self.effect = "evolve-done"
+            self.message = "%s evolved into %s!" % (self.before, self.after)
+            self.next_at = now + EVOLVE_DONE
+        elif self.phase == "done":
+            self.phase = "over"
+            self.effect = ""
+            self.closed_at = now
+        else:
+            return False
+        self.seq += 1
+        return True
+
+    def tick(self, now):
+        if self.phase == "over":
+            return False
+        if now >= self.ends_at or now >= self.next_at:
+            return self.advance(now)
+        return False
+
+    def flee(self, now, reason="draw"):
+        """Escape. The evolution itself has already been written down, so
+        skipping the picture costs nothing but the picture."""
+        if self.phase == "over":
+            return False
+        self.phase = "over"
+        self.effect = ""
+        self.closed_at = now
+        self.seq += 1
+        return True
+
+    def finished(self, now):
+        return self.phase == "over"
+
+    def deadline(self):
+        return self.closed_at if self.phase == "over" else self.next_at
+
+    def snapshot(self):
+        creature = dict(self.creature)
+        evolved = self.phase in ("done", "over")
+        creature["name"] = self.after if evolved else self.before
+        creature["stage"] = self.stage if evolved else max(1, self.stage - 1)
+        return {
+            "active": True,
+            "scene": "evolve",
+            "phase": self.phase,
+            "message": self.message,
+            "effect": self.effect,
+            "seq": self.seq,
+            "monitor": self.monitor,
+            "before": self.before,
+            "after": self.after,
+            "stage": self.stage,
+            "player": _side(creature),
+        }
 
 
 def moves_choice(fighter, rng):
