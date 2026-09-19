@@ -7,6 +7,7 @@ check: test
 	python3 -m py_compile bin/battles bin/battles-ctl bin/make-battle-audio
 	python3 -m py_compile bin/import-battle-theme
 	python3 -m py_compile lib/battle_rules.py lib/battle_assets.py
+	python3 -m py_compile lib/hyprland.py lib/window_moves.py lib/pantry.py
 	python3 -m json.tool manifest.json >/dev/null
 	test -f Service.qml
 	test -f Battle.qml

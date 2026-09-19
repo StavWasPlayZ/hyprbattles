@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 An Omarchy (Quickshell/Hyprland) plugin: when a window move collides with
 another window, roll 25% and settle it with a turn-based Pokémon-style fight.
-Pure Python 3 stdlib + QML. No build step, no third-party modules.
+Works on any Hyprland layout — dwindle, master, scrolling — and needs no other
+plugin. Pure Python 3 stdlib + QML. No build step, no third-party modules.
 
 ## Commands
 
@@ -16,6 +17,7 @@ make test                       # tests only
 python3 tests/battles.py Damage                    # one test class
 python3 tests/battles.py Eating.test_eating_heals_and_costs_the_turn   # one test
 make audio                      # regenerate the committed WAVs (bin/make-battle-audio)
+bin/battles-ctl move left       # move the focused window, roll if it collided
 bin/battles-ctl                 # current battle state as JSON (needs the daemon)
 bin/battles-ctl debug           # force a battle; pick N / advance to drive it
 bin/battles-ctl pantry          # the food shelves, read-only, daemon or not
@@ -43,6 +45,7 @@ no pad and no screen:
 | Layer | File | Owns |
 | --- | --- | --- |
 | Rules | `lib/battle_rules.py` | Creatures, types, damage, turn loop, menus, timeouts. **Zero I/O.** Emits a snapshot dict after every change. |
+| Moves | `lib/window_moves.py` | Which command moves a window one cell per layout, and whether a move swapped two windows. **Zero I/O.** |
 | Wiring | `bin/battles` (daemon) | Sockets, sound, pad lease, bar toggle, the roll, publishing the snapshot. |
 | Picture | `Battle.qml` + `BattleFighter/BattleStatusBox/BattleTypeChip/PixelText.qml` | Draws the snapshot and nothing else. |
 
@@ -54,26 +57,44 @@ state out — `Daemon.handle_command`). Keyboard names map onto forwarded
 controller events (`Daemon.KEYS`) so there is one set of handlers, not two.
 
 Other modules: `lib/pantry.py` (the `ITEM` food shelves and their ledger),
-`lib/battle_assets.py` (which directory each sound comes from).
+`lib/battle_assets.py` (which directory each sound comes from),
+`lib/hyprland.py` (the two Hyprland sockets, shared by the daemon and the CLI
+so a move made with the daemon down lands the same way).
 
-### Neighbouring plugins are never linked
+### No plugin is required, and none is ever linked
 
-Hyprscroll2D (layout) and the gamepad plugin are reached **only** through
-Hyprland's own event/command sockets and the gamepad plugin's unix control
-socket. Nothing is imported, and neither is looked for on disk — a missing
-neighbour means no battles rather than an error. The gamepad plugin is fully
-optional; battles still trigger from keyboard moves.
+Demon Slayer's Hyprscroll2D (layout) and the gamepad plugin are reached
+**only** through Hyprland's own event/command sockets and the gamepad plugin's
+unix control socket. Nothing is imported, and neither is looked for on disk —
+a missing neighbour costs a shortcut, not an error. In user-facing docs the
+layout is always "Demon Slayer's Hyprscroll2D", a **private fork of the
+original Hyprscroll2D that is never to be published** (its author's call);
+never present it as a dependency.
 
-Trigger path: both plugins post `custom>>...:collision,<addr>,<addr>,<dir>` on
-Hyprland's event socket (payload rides inside the event *name*, comma
-separated, because `hl.dsp.event` drops extra arguments). Both are listened
-for and de-duplicated within 0.5s, or d-pad moves would roll twice. Then:
-switch checked → 25% roll → 6s cooldown.
+Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
+
+1. **The one everybody has.** A key bound to `battles-ctl move <dir>` →
+   daemon's `move` verb → window list, dispatch, window list again. Two
+   windows trading places is a collision; one window landing in an empty cell
+   is not. `lib/window_moves.py` picks the command from `getoption
+   general:layout` (`hl.dsp.layout("move left")` for a scrolling layout,
+   `hl.dsp.window.move({ direction = "l" })` for everything else) and falls
+   back to the other style when the first moved nothing, so a per-workspace
+   layout works. The move happens with battles off, on a losing roll, and with
+   the daemon stopped — `battles-ctl` makes it itself then.
+2. **The shortcut.** Both plugins post
+   `custom>>...:collision,<addr>,<addr>,<dir>` on Hyprland's event socket
+   (payload rides inside the event *name*, comma separated, because
+   `hl.dsp.event` drops extra arguments). Both are listened for and
+   de-duplicated within 0.5s, or d-pad moves would roll twice.
 
 ## Invariants that tests enforce — do not break them
 
-- **A battle result may only ever send one layout `move` message.** Never
-  close, kill, float, fullscreen or re-workspace a window (`BattleWiring`).
+- **A battle result may only ever send one `move` command, and it is the
+  exact reverse of the move that started the battle** (`self.move_style`, so a
+  dwindle swap is not undone with a scrolling layout's message). Never close,
+  kill, float, fullscreen or re-workspace a window (`BattleWiring`,
+  `AnyLayout`).
 - **The pantry is read-only.** A test greps `lib/pantry.py` and fails if a
   shelf ever reaches for a write, an unlink, a signal or a subprocess. It
   reads `/proc` counters and one `statvfs`, never file contents.

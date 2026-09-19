@@ -1,7 +1,8 @@
 # Window battles
 
-Throw a window at another window with the d-pad and, one time in four, the two
-of them settle it in a turn-based fight instead of just swapping places. The
+Throw a window at another window and, one time in four, the two of them settle
+it in a turn-based fight instead of just swapping places. On any Hyprland
+layout - dwindle, master or scrolling - and with a d-pad or without one. The
 windows themselves are the fighters - the real, live, still-running windows,
 captured onto a battle screen over your own wallpaper - and the winner keeps
 the cell they were arguing about.
@@ -26,6 +27,12 @@ It does not matter what asked for the move. A window thrown with
 d-pad, and both are played the same way: the overlay takes the keyboard, and
 borrows the controller as well if there is one.
 
+The move itself is never conditional on any of this. `battles-ctl move` moves
+the window with battles switched off, on a losing roll, and with the daemon
+stopped - in which case the command makes the move itself rather than asking
+for it. A move key that died with the shell would be a far worse bargain than
+a missed battle.
+
 The switch is checked before the roll, and it is only a `stat()` on a flag
 file, so it costs nothing to check on every collision rather than caching a
 value a click could make stale.
@@ -33,9 +40,19 @@ value a click could make stale.
 There is a six second quiet period afterwards, so a run of collisions cannot
 stack battles on top of each other, and a battle can never start another one.
 
-The Hyprscroll2D layout plugin is what makes windows collide at all, so
-without it there are simply no battles. Nothing errors; moves just swap
-windows the way they always did.
+**No layout plugin is required.** The daemon makes the move itself, on
+`battles-ctl move <direction>`, and compares Hyprland's window list either
+side of it: two windows standing where the other one was is a collision, one
+window in a cell that was empty is not. Dwindle, master and a scrolling layout
+therefore collide the same way, and the only thing that differs between them
+is which command moves a window one cell - which is all of
+`lib/window_moves.py`.
+
+**Demon Slayer's Hyprscroll2D** - a private fork of the original Hyprscroll2D,
+never to be published, and that is its author's call - announces its own
+collisions, so on it the move keys it already binds trigger battles with
+nothing rebound. That is a shortcut for one desktop, not a dependency: without
+it, bind a key to `battles-ctl move` and nothing else changes.
 
 **The gamepad plugin is optional.** It adds a controller to play with, the
 narrower pad-only collision event, and a second of both motors flat out as a
@@ -52,12 +69,15 @@ nothing when it is not.
 
 ## The trigger path
 
+The one everybody has - a key bound to `battles-ctl move left`:
+
 ```
-a d-pad push, or SUPER + SHIFT + H
-  -> hl.dsp.layout("move left")
-       -> the layout plugin's layout_msg "move"
-            -> core.move() returns (true, <the window it displaced>)
-                 -> custom>>io.github.kirollosatef.hyprscroll2d:collision,...
+SUPER + SHIFT + H
+  -> bin/battles-ctl move left  ->  the daemon's `move` verb
+       -> the window list now
+            -> hl.dsp.window.move({ direction = "l" })   (dwindle, master)
+               or hl.dsp.layout("move left")             (a scrolling layout)
+                 -> the window list again: did two windows trade places?
                       -> bin/battles: switched on? roll 25%
                            -> borrows the controller, if there is one
                                 -> lib/battle_rules.py runs the fight
@@ -65,9 +85,31 @@ a d-pad push, or SUPER + SHIFT + H
                                           -> Battle.qml draws it
 ```
 
+Which of the two commands goes out is decided by `getoption general:layout`,
+and if the first one moves nothing at all the other one gets its turn. That
+fallback is what makes a per-workspace layout work: a move message a layout
+does not understand is a no-op, and a no-op is visible - nothing on screen
+moved - so only one of the two can ever land.
+
+The shortcut, on a desktop that has Demon Slayer's Hyprscroll2D:
+
+```
+a d-pad push, or SUPER + SHIFT + H
+  -> hl.dsp.layout("move left")
+       -> the layout plugin's layout_msg "move"
+            -> core.move() returns (true, <the window it displaced>)
+                 -> custom>>me.schafman.omarchy.plugin.hyprscroll2d:collision,...
+                      -> bin/battles: switched on? roll 25%   (and on as above)
+```
+
 Each plugin only knows the next through a public interface. The layout says
 *two windows swapped*, and that is the trigger. This plugin decides whether
 that is worth a fight, which is the only part that is about battles at all.
+
+Either way a lost battle is undone by the same command that made the move,
+run backwards - `hl.dsp.layout("move right")` for a layout message,
+`hl.dsp.window.move({ direction = "r" })` for a dispatcher. Undoing a dwindle
+swap with a scrolling layout's message would do nothing at all, and quietly.
 
 The gamepad plugin posts a narrower version of the same thing - the same
 collision, but only when the **pad** caused it, which only it can know. That
@@ -97,7 +139,7 @@ arguments, so the payload rides inside the name, comma separated. On the socket
 it arrives as:
 
 ```
-custom>>io.github.kirollosatef.hyprscroll2d:collision,0x55f1c2,0x55f1d8,left
+custom>>me.schafman.omarchy.plugin.hyprscroll2d:collision,0x55f1c2,0x55f1d8,left
 custom>>dev.cstav.omarchy.plugin.hyprscroll2d-gamepad:collision,0x55f1c2,0x55f1d8,left
 ```
 
@@ -171,7 +213,7 @@ controller as well when one is there.
 | D-pad or left stick | Arrows, or `hjkl` | Move the cursor: up/down in `FIGHT`/`ITEM`/`RUN` and the pantry, around the 2x2 move grid |
 | `A` | `Enter` or `Space` | Take the highlighted option, or show the next line of text |
 | `B` | `Backspace` | Out of the move list or the pantry, or on with the text |
-| `Start` / `Select` | `Escape` | Leave, whatever is happening |
+| `Start` / `Select` | `Escape` | Leave, whatever is happening; again on the closing line, go now |
 
 While the controller is borrowed, nothing on it reaches the desktop, so no
 stray press can close or throw a window mid-fight. Holding `Guide` still hands
@@ -210,6 +252,12 @@ a free hit. That makes `RUN` a real decision rather than a free exit.
 None of that applies to `Start`, `Select` or `Escape`. Those end the battle
 outright, every time, whatever the odds would have said. They are the escape
 hatch, and an escape hatch with a dice roll on it is not one.
+
+A battle that is over still sits there for a few seconds so its last line can
+be read. Pressing the way out again during those seconds takes the screen down
+immediately, because somebody reaching for the escape hatch twice has read
+enough. The result is applied when the overlay goes either way, so leaving
+early cannot change what the battle did.
 
 ## What a result does
 
@@ -430,8 +478,9 @@ workspace and without a pad plugged in.
 From a script, or to drive one without a controller:
 
 ```bash
+bin/battles-ctl move left  # move the focused window and roll for a battle
 bin/battles-ctl            # the battle on screen, as JSON
-bin/battles-ctl cancel     # flee it (what Escape does)
+bin/battles-ctl cancel     # flee it, or close an already-over one (Escape)
 bin/battles-ctl stop       # tear it down now, without the closing line
 bin/battles-ctl debug      # force one
 bin/battles-ctl on|off|toggle
@@ -465,6 +514,7 @@ Trigger       that the odds really are one in four, over 20000 rolls
 TurnLoop      the menus, the phases, the timeouts, the snapshot's shape
 Running       free before the first blow, a gamble after it, hatches unaffected
 BattleWiring  that a result can still only ever ask for a move
+AnyLayout     the move commands, spotting a swap, and the layout fallback
 Readings      the /proc parsers, against fixtures and against this machine
 TheLedger     regeneration, persistence, and a corrupt file
 ThePantry     live readings minus the ledger, and that the machine never moves

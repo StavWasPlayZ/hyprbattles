@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
-"""Run window battles: watch for a pad-driven collision, roll for it, fight.
+"""Run window battles: spot a window colliding with another, roll, fight.
 
-This daemon owns the whole feature. It waits for the gamepad plugin to report
-that the controller just threw one window into another, rolls the odds, and on
-a hit borrows the pad, runs a turn-based fight between the two windows and
-publishes it for the overlay (Battle.qml) to draw.
+This daemon owns the whole feature. It waits for one window to be thrown into
+another, rolls the odds, and on a hit borrows the pad, runs a turn-based fight
+between the two windows and publishes it for the overlay (Battle.qml) to draw.
 
-It depends on two plugins and requires neither:
+A collision reaches it two ways, and it needs no plugin for either:
 
-  * the gamepad plugin posts the collision this listens for, and lends it the
-    controller (its docs/PAD-API.md). Without it, nothing ever triggers;
-  * the Hyprscroll2D layout plugin is what makes windows collide at all, and
-    the one `move` message a lost battle sends is its. Without it, likewise.
+  * it moves the window itself, on `battles-ctl move <direction>`, and sees
+    the swap in Hyprland's own window list. That works on dwindle, on master
+    and on a scrolling layout alike - lib/window_moves.py is the whole of the
+    difference between them;
+  * or a layout plugin announces the collision as a custom event, which is
+    what Demon Slayer's Hyprscroll2D does, and the gamepad plugin repeats for
+    pad-driven moves only.
 
-Neither is imported, linked against or looked for on disk. Both are reached
-through Hyprland's own sockets, so a missing one means no battles rather than
-an error.
+Both optional plugins are reached through Hyprland's own sockets and neither
+is imported, linked against or looked for on disk, so a missing one costs a
+trigger path rather than raising an error.
 
 The rules are in lib/battle_rules.py, which has no I/O in it at all; this file
 is the wiring, and Battle.qml is the picture. Nothing here can do more to a
@@ -40,7 +42,9 @@ PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PLUGIN_ROOT, "lib"))
 import battle_assets                                       # noqa: E402
 import battle_rules as rules                                # noqa: E402
+import hyprland                                            # noqa: E402
 import pantry                                              # noqa: E402
+import window_moves as moves                               # noqa: E402
 
 PR_SET_PDEATHSIG = 1
 
@@ -67,11 +71,19 @@ BAR_FLAG_PATH = os.path.join(STATE_HOME, "omarchy", "toggles", "bar-off")
 # that decision, and `battles-ctl assets` prints what it came to.
 ASSETS = battle_assets.GENERATED
 
-# What the layout plugin posts whenever a move swaps two windows instead of
-# stepping into an empty cell, whatever asked for the move. This is the
-# trigger: a window thrown by SUPER + SHIFT + H deserves a battle exactly as
-# much as one thrown by the d-pad.
-LAYOUT_COLLISION_EVENT = "io.github.kirollosatef.hyprscroll2d:collision"
+# What Demon Slayer's Hyprscroll2D posts whenever a move swaps two windows
+# instead of stepping into an empty cell, whatever asked for the move. That
+# layout is a private fork nobody else has, so it is a shortcut rather than a
+# requirement: `battles-ctl move` sees the same swap on any layout, by looking
+# at the window list either side of the move.
+LAYOUT_COLLISION_EVENT = "me.schafman.omarchy.plugin.hyprscroll2d:collision"
+# The name that layout posted before it took an id of its own. An event name
+# is a plugin id, so renaming one renames the other, and an install made
+# before the rename - or one pinned to it - still announces the old name.
+# Listening for both costs one string comparison and saves a plugin that has
+# nothing to do with the rename from going quiet on somebody else's release
+# schedule.
+LEGACY_LAYOUT_COLLISION_EVENT = "io.github.kirollosatef.hyprscroll2d:collision"
 # And the gamepad plugin's narrower version of the same thing, posted only
 # when the pad caused it. Listened for as well, so a pad-driven battle knows
 # it is pad-driven; the two are de-duplicated below, because for a d-pad move
@@ -90,66 +102,6 @@ CLIENT_NAME = "hyprbattles"
 
 def log(message):
     print("hyprbattles: %s" % message, file=sys.stderr, flush=True)
-
-
-# -------------------------------------------------------------- Hyprland IPC
-
-class Hyprland:
-    """Just enough of Hyprland's sockets: ask it things, tell it things, and
-    listen to what it announces."""
-
-    def __init__(self):
-        self.signature = (os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
-                          or self._discover())
-        base = os.path.join(RUNTIME_DIR, "hypr", self.signature or "")
-        self.command_socket = os.path.join(base, ".socket.sock")
-        self.event_socket = os.path.join(base, ".socket2.sock")
-
-    @staticmethod
-    def _discover():
-        root = os.path.join(RUNTIME_DIR, "hypr")
-        try:
-            candidates = [
-                entry for entry in os.listdir(root)
-                if os.path.exists(os.path.join(root, entry, ".socket.sock"))
-            ]
-        except OSError:
-            return None
-        return candidates[0] if len(candidates) == 1 else None
-
-    def request(self, payload):
-        try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(1.0)
-                client.connect(self.command_socket)
-                client.sendall(payload.encode())
-                chunks = []
-                while True:
-                    chunk = client.recv(8192)
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-            return b"".join(chunks).decode(errors="replace")
-        except OSError:
-            return ""
-
-    def dispatch(self, command):
-        # This Hyprland is configured in Lua and evaluates `hl.dispatch(<what
-        # we sent>)`, so a classic dispatcher string is a syntax error that
-        # comes back in a reply nobody reads. Everything sent from here is an
-        # hl.dsp expression.
-        return self.request("/dispatch " + command) if command else ""
-
-    def query(self, what):
-        try:
-            return json.loads(self.request("j/" + what))
-        except (ValueError, TypeError):
-            return None
-
-    def events(self):
-        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        client.connect(self.event_socket)
-        return client
 
 
 # -------------------------------------------------------------------- sound
@@ -351,7 +303,7 @@ class PadLease:
 
 class Daemon:
     def __init__(self):
-        self.hypr = Hyprland()
+        self.hypr = hyprland.Hyprland()
         # Bar toggles and notifiers still to be reaped; see set_bar.
         self._bar_toggles = []
         self._notifiers = []
@@ -368,6 +320,11 @@ class Daemon:
 
         self.battle = None
         self.source = "layout"
+        # Which family of move command put the two windows where they are, so
+        # a lost battle is undone by the same one running backwards. See
+        # lib/window_moves.py; a collision announced by a layout plugin is by
+        # definition that layout's own message.
+        self.move_style = "layout"
         self.rng = random.Random()
         self.chance = rules.BATTLE_CHANCE
         self.quiet_until = 0.0
@@ -433,8 +390,54 @@ class Daemon:
             return
         if not rules.should_battle(self.rng, self.chance):
             return
+        if source != "move":
+            # Announced by a layout plugin, so the swap was that layout's own
+            # move message. move() has already said which style it used.
+            self.move_style = "layout"
         self.start(parts[0], parts[1],
                    parts[2] if len(parts) > 2 else "", now, source)
+
+    def layout(self):
+        """The layout in use, as lib/window_moves.py names them."""
+        return moves.layout_name(self.hypr.query("getoption general:layout"))
+
+    def move(self, direction, now):
+        """Move the focused window one cell, and roll if it collided.
+
+        This is the trigger path for everybody: bind a direction to
+        `battles-ctl move <direction>` and the daemon makes the move itself,
+        which is how it knows a swap happened without any layout plugin
+        telling it. Two window lists, taken either side of the move, are the
+        whole of the detection - so dwindle, master and a scrolling layout all
+        collide the same way. What is compared is who was next to whom rather
+        than where anything was, because a scrolling layout pans the camera
+        along with the window it moved.
+
+        The move happens whatever the switch says and whatever the roll comes
+        to. A keybind that only worked while battles were on would be a
+        keybind nobody could leave bound.
+        """
+        direction = direction.strip().lower()
+        if direction not in moves.DIRECTIONS:
+            return False
+        active = self.hypr.query("activewindow") or {}
+        address = str(active.get("address") or "").lower()
+        before = moves.placement(self.hypr.query("clients") or [])
+        for style in moves.order(self.layout()):
+            self.hypr.dispatch(moves.command(style, direction))
+            after = moves.placement(self.hypr.query("clients") or [])
+            if after == before:
+                # That layout does not speak this style: a message it does not
+                # understand moves nothing at all, so the other style gets its
+                # turn. Only one of the two can ever land.
+                continue
+            partner = moves.swapped(address, direction, before, after)
+            if partner:
+                self.move_style = style
+                self.on_collision("%s,%s,%s" % (address, partner, direction),
+                                  now, "move")
+            return True
+        return False
 
     @staticmethod
     def window_by_address(address, clients):
@@ -512,10 +515,10 @@ class Daemon:
         # it back where it came from, which is the same swap run backwards.
         # Nothing else can happen to either window, whatever the result.
         if fight.result == "loss" and fight.direction:
-            opposite = {"left": "right", "right": "left",
-                        "up": "down", "down": "up"}.get(fight.direction)
-            if opposite:
-                self.hypr.dispatch('hl.dsp.layout("move %s")' % opposite)
+            command = moves.command(self.move_style,
+                                    moves.OPPOSITES.get(fight.direction, ""))
+            if command:
+                self.hypr.dispatch(command)
                 # The one result that puts a window somewhere the person did
                 # not ask for it to be. The overlay is gone by now, so the
                 # notification is the only thing left to say why.
@@ -595,8 +598,13 @@ class Daemon:
             # Out of the move list back to FIGHT/RUN, or on with the text.
             changed = self.battle.back(now) or self.battle.advance(now)
         elif name in ("Start", "Select"):
-            # The unconditional way out, whatever the odds on RUN say.
+            # The unconditional way out, whatever the odds on RUN say. Press
+            # it again once the closing line is up and the battle goes now,
+            # rather than sitting through the rest of the dwell.
             changed = self.battle.flee(now)
+            if not changed:
+                self.end(now)
+                return
         else:
             return
         if changed:
@@ -696,8 +704,14 @@ class Daemon:
         now = time.monotonic()
 
         if verb == "cancel" and self.battle:
-            self.battle.flee(now)
-            self.publish()
+            # Escape. The first one flees; a second one, with the battle
+            # already over and only its closing line left on screen, takes
+            # the overlay down immediately. The result is applied either way,
+            # by end(), so leaving early cannot change what happened.
+            if self.battle.flee(now):
+                self.publish()
+            else:
+                self.end(now)
         elif verb == "stop" and self.battle:
             # Harder than cancel: tear it down now, no closing line.
             self.end(now)
@@ -714,6 +728,11 @@ class Daemon:
                  "servings": shelf["servings"]}
                 for shelf in self.pantry.stock()
             ]}
+        elif verb == "move":
+            # The layout-agnostic trigger: move the window, and roll if that
+            # move landed on somebody. Bound to a key, this replaces whatever
+            # move dispatcher was on it.
+            self.move(parts[1] if len(parts) > 1 else "", now)
         elif verb == "refresh":
             # Somebody flipped the flag file behind our back (the menu row
             # does exactly that, so it still works with no daemon running).
@@ -856,7 +875,8 @@ class Daemon:
             if name != "custom":
                 continue
             for event, source in ((PAD_COLLISION_EVENT, "pad"),
-                                  (LAYOUT_COLLISION_EVENT, "layout")):
+                                  (LAYOUT_COLLISION_EVENT, "layout"),
+                                  (LEGACY_LAYOUT_COLLISION_EVENT, "layout")):
                 if not data.startswith(event + ","):
                     continue
                 # A surprise in the payload must not cost the event loop.

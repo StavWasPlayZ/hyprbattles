@@ -6,7 +6,7 @@
     battles-ctl on|off|toggle   # turn battles on or off, remembered across
                                 # restarts. Works with the daemon stopped: the
                                 # setting is a file, not a running process.
-    battles-ctl cancel          # flee the battle on screen (what Escape does)
+    battles-ctl cancel          # flee it, or close an over one (what Escape does)
     battles-ctl stop            # tear it down at once, without the closing line
     battles-ctl debug           # force one between the focused window and its
                                 # neighbour, for working on the overlay
@@ -29,6 +29,13 @@
                                 # HYPRBATTLES_ASSETS=<mode> overrides the
                                 # saved setting for one process.
 
+    battles-ctl move <dir>      # left|right|up|down: move the focused window
+                                # one cell and, if that landed on another
+                                # window, roll for a battle. This is what a
+                                # move key should be bound to; it moves the
+                                # window whether or not battles are on, and
+                                # whether or not the daemon is running.
+
     battles-ctl key <name>      # left|right|up|down|confirm|back|leave, the
                                 # overlay's keyboard mapped onto the controls
 
@@ -47,12 +54,15 @@ import sys
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PLUGIN_ROOT, "lib"))
-# The one exception to this script importing nothing. Two copies of the
-# resolution order would be two answers to "which file is playing", and the
-# whole reason `battles-ctl assets` exists is to be the one that is right.
-# The module is pure stdlib, does nothing at import and stats at most a
-# handful of paths.
+# The exceptions to this script importing nothing, and both for the same
+# reason: a second copy of one of these answers would be a second answer.
+# Which file a sound comes from is the whole point of `battles-ctl assets`,
+# and how a window is moved has to be what the daemon would have done, or a
+# move made with the daemon down would land differently from one made with it
+# up. All three are pure stdlib and do nothing at import.
 import battle_assets                                        # noqa: E402
+import hyprland                                             # noqa: E402
+import window_moves as moves                                # noqa: E402
 
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
 SOCKET_PATH = os.path.join(RUNTIME_DIR, "hyprscroll2d-battle.sock")
@@ -64,8 +74,10 @@ STATE_HOME = (os.environ.get("XDG_STATE_HOME")
 DISABLED_FLAG = os.path.join(STATE_HOME, "hyprscroll2d", "battles-disabled")
 
 COMMANDS = ("status", "enabled", "on", "off", "toggle", "cancel", "stop",
-            "debug", "pantry", "assets", "pick", "advance", "key")
-# These work without a daemon; the rest need one.
+            "debug", "pantry", "assets", "pick", "advance", "key", "move")
+# These work without a daemon; the rest need one. `move` is not among them
+# because a daemon is what makes a move a battle - but it is the one command
+# that still does its job without one, by making the move itself.
 OFFLINE = ("enabled", "on", "off", "toggle", "assets")
 
 
@@ -152,6 +164,28 @@ def ask(message):
         return json.loads(client.recv(8192).decode())
 
 
+def move(direction):
+    """Move the focused window with no daemon to do it for us.
+
+    The keybind must not die with the shell: a restart is a few seconds in
+    which a move key that does nothing would be far more annoying than a
+    missed battle. Nothing rolls here - there is nobody to run a fight - so
+    this is only the move, made exactly the way the daemon would have made it.
+    """
+    direction = direction.strip().lower()
+    if direction not in moves.DIRECTIONS:
+        print("unknown direction: %s" % direction, file=sys.stderr)
+        return 2
+    hypr = hyprland.Hyprland()
+    layout = moves.layout_name(hypr.query("getoption general:layout"))
+    for style in moves.order(layout):
+        before = moves.placement(hypr.query("clients") or [])
+        hypr.dispatch(moves.command(style, direction))
+        if moves.placement(hypr.query("clients") or []) != before:
+            break               # it landed; the other style would move it back
+    return 0
+
+
 def main(argv):
     argument = (argv[1] if len(argv) > 1 else "status").lower()
     if argument in ("-h", "--help"):
@@ -177,12 +211,17 @@ def main(argv):
         return 0
 
     message = (" ".join([argument] + argv[2:])
-               if argument in ("pick", "key") else argument)
+               if argument in ("pick", "key", "move") else argument)
     try:
         state = ask(message)
     except (OSError, ValueError):
+        if argument == "move":
+            return move(argv[2] if len(argv) > 2 else "")
         print("window battles daemon is not running", file=sys.stderr)
         return 1
+
+    if argument == "move":
+        return 0                # the daemon moved it, and rolled for it
 
     if argument == "pantry":
         shelves = state.get("pantry") or []

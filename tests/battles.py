@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.join(ROOT, "lib"))
 import battle_assets as assets                                # noqa: E402
 import battle_rules as battles                                # noqa: E402
 import pantry                                                 # noqa: E402
+import window_moves as moves                                  # noqa: E402
 
 
 def load_ctl():
@@ -561,11 +562,26 @@ class BattleWiring(unittest.TestCase):
         start = source.index("    def end(self, now):")
         body = source[start:source.index("    def set_bar", start)]
         for forbidden in ("window.close", "killactive", "movetoworkspace",
-                          "window.move", "float", "fullscreen"):
+                          "float", "fullscreen"):
             self.assertNotIn(forbidden, body, forbidden)
-        self.assertIn('hl.dsp.layout("move %s")', body)
+        # And the move it does ask for is built by the one module that knows
+        # how, so it cannot quietly become something else here.
+        self.assertIn("moves.command(self.move_style", body)
 
-    def ending(self, result, direction="left"):
+    def test_every_command_a_move_can_become_is_a_move(self):
+        # The other half of the invariant: end() sends whatever that module
+        # hands it, so every style it can hand back has to be a move and
+        # nothing else.
+        for style, template in moves.STYLES.items():
+            for direction in moves.DIRECTIONS:
+                command = moves.command(style, direction)
+                self.assertTrue(command.startswith("hl.dsp."), command)
+                self.assertIn("move", command)
+                for forbidden in ("close", "kill", "workspace", "float",
+                                  "fullscreen", "resize"):
+                    self.assertNotIn(forbidden, command)
+
+    def ending(self, result, direction="left", style="layout"):
         """A bare daemon, ended on one result. Nothing here has a compositor,
         a pad, a speaker or a screen."""
         daemon = bd.Daemon.__new__(bd.Daemon)
@@ -574,6 +590,7 @@ class BattleWiring(unittest.TestCase):
             "player": {"name": "FOOT"},
         })()
         daemon.quiet_until = 0.0
+        daemon.move_style = style
         daemon.pad = FakePad()
         daemon.sound = FakeSound()
         daemon.effects = FakeSound()
@@ -608,6 +625,15 @@ class BattleWiring(unittest.TestCase):
             self.assertEqual(daemon.notices, [], (result, direction))
             self.assertEqual(daemon.dispatched, [], (result, direction))
 
+    def test_a_loss_is_undone_in_the_language_the_move_was_made_in(self):
+        # The one thing a battle does to the desktop has to be the exact
+        # reverse of the move that started it, whichever layout that was.
+        for style, expected in (
+                ("layout", 'hl.dsp.layout("move right")'),
+                ("window", 'hl.dsp.window.move({ direction = "r" })')):
+            daemon = self.ending("loss", "left", style)
+            self.assertEqual(daemon.dispatched, [expected], style)
+
     def test_the_notifier_is_reaped_like_the_bar_toggles(self):
         # Nothing waits on it, so an unreaped one is a zombie for the life of
         # the daemon - in the plugin that serves zombies as food.
@@ -627,7 +653,12 @@ class BattleWiring(unittest.TestCase):
             stripped = line.strip()
             if stripped.startswith("#") or "self.hypr.dispatch(" not in stripped:
                 continue
-            self.assertIn("hl.dsp.", stripped, stripped)
+            # Either the expression is right there, or it came from the module
+            # whose every template the test above checks.
+            self.assertTrue("hl.dsp." in stripped or "moves.command" in stripped
+                            or "command)" in stripped, stripped)
+        for template in moves.STYLES.values():
+            self.assertTrue(template.startswith("hl.dsp."), template)
 
 
 class FakeSound:
@@ -779,6 +810,230 @@ class CollisionGate(unittest.TestCase):
         self.assertIsNone(bd.Daemon.window_by_address("0xmissing", clients))
 
 
+class FakeCompositor:
+    """Two tiled windows side by side, and a compositor that understands
+    exactly one of the two move styles - which is the situation on every real
+    desktop.
+
+    `pans` is what a scrolling layout does: the camera follows the window that
+    moved, so it ends up back at the pixel it started on and every other
+    window shifts instead. It is the case that absolute coordinates get wrong.
+    """
+
+    SIZE = [800, 600]
+
+    def __init__(self, layout="dwindle", understands="window", pans=False):
+        self.layout = layout
+        self.understands = understands
+        self.pans = pans
+        # The active window is the right-hand one, so it has somebody to
+        # its left to be moved into.
+        self.places = {"0xaaa": [800, 0], "0xbbb": [0, 0]}
+        self.dispatched = []
+
+    def query(self, what):
+        if what.startswith("getoption"):
+            return {"option": "general:layout", "str": self.layout}
+        if what == "activewindow":
+            return {"address": "0xAAA"}
+        if what == "clients":
+            return [{"address": address, "mapped": True, "floating": False,
+                     "at": list(at), "size": list(self.SIZE),
+                     "workspace": {"id": 1}}
+                    for address, at in self.places.items()]
+        return None
+
+    def dispatch(self, command):
+        self.dispatched.append(command)
+        if command != moves.command(self.understands, "left"):
+            return              # a message this layout does not know: a no-op
+        was = list(self.places["0xaaa"])
+        self.places["0xaaa"], self.places["0xbbb"] = (
+            list(self.places["0xbbb"]), was)
+        if self.pans:
+            shift = was[0] - self.places["0xaaa"][0]
+            for at in self.places.values():
+                at[0] += shift
+
+
+def tiled(address, at, size=(800, 600), workspace=1):
+    return {"address": address, "mapped": True, "floating": False,
+            "at": list(at), "size": list(size),
+            "workspace": {"id": workspace}}
+
+
+class AnyLayout(unittest.TestCase):
+    """Moving a window without a layout plugin to do it.
+
+    Demon Slayer's Hyprscroll2D is a private fork, so most desktops do not
+    have it and never will. `battles-ctl move` is the trigger path for those:
+    the daemon makes the move itself and works out from the window list who
+    was next to whom, which comes to the same thing on dwindle, on master and
+    on a scrolling layout.
+    """
+
+    ROW = [tiled("0xa", (0, 0)), tiled("0xb", (800, 0)), tiled("0xc", (1600, 0))]
+
+    def daemon(self, compositor):
+        daemon = bd.Daemon.__new__(bd.Daemon)
+        daemon.hypr = compositor
+        daemon.move_style = "layout"
+        daemon.collisions = []
+        daemon.on_collision = lambda *args: daemon.collisions.append(args)
+        return daemon
+
+    def test_a_scrolling_layout_is_asked_in_its_own_language(self):
+        self.assertEqual(moves.style_for("hyprscroll2d"), "layout")
+        self.assertEqual(moves.command("layout", "left"),
+                         'hl.dsp.layout("move left")')
+
+    def test_everything_else_takes_the_dispatcher(self):
+        for layout in ("dwindle", "master", ""):
+            self.assertEqual(moves.style_for(layout), "window")
+        self.assertEqual(moves.command("window", "left"),
+                         'hl.dsp.window.move({ direction = "l" })')
+
+    def test_the_lua_prefix_is_not_part_of_the_name(self):
+        # Hyprland reports a Lua layout as `lua:hyprscroll2d`; the prefix says
+        # where the layout came from, not which layout it is.
+        self.assertEqual(moves.layout_name({"str": "lua:hyprscroll2d"}),
+                         "hyprscroll2d")
+        self.assertEqual(moves.layout_name(None), "")
+
+    def test_a_nonsense_direction_has_no_command(self):
+        self.assertEqual(moves.command("window", "sideways"), "")
+        self.assertEqual(moves.command("nonsense", "left"), "")
+
+    def test_only_tiled_windows_are_in_a_cell(self):
+        places = moves.placement([
+            tiled("0xA", (0, 0)),
+            dict(tiled("0xB", (10, 10)), floating=True),
+            dict(tiled("0xC", (20, 20)), mapped=False),
+        ])
+        self.assertEqual(list(places), ["0xa"])
+
+    def test_a_neighbour_is_the_nearest_window_in_that_direction(self):
+        places = moves.placement(self.ROW)
+        self.assertEqual(moves.neighbour("0xb", places, "left"), "0xa")
+        self.assertEqual(moves.neighbour("0xb", places, "right"), "0xc")
+        self.assertEqual(moves.neighbour("0xa", places, "left"), "")
+        self.assertEqual(moves.neighbour("0xa", places, "up"), "")
+
+    def test_a_window_in_another_row_is_not_a_neighbour(self):
+        places = moves.placement([tiled("0xa", (0, 0)),
+                                  tiled("0xb", (800, 600))])
+        self.assertEqual(moves.neighbour("0xa", places, "right"), "")
+        self.assertEqual(moves.neighbour("0xa", places, "down"), "")
+        self.assertEqual(moves.neighbour("0xb", places, "up"), "")
+
+    def test_a_swap_is_the_pair_changing_sides(self):
+        before = moves.placement([tiled("0xa", (0, 0)), tiled("0xb", (800, 0))])
+        after = moves.placement([tiled("0xa", (800, 0)), tiled("0xb", (0, 0))])
+        self.assertEqual(moves.swapped("0xb", "left", before, after), "0xa")
+
+    def test_a_camera_that_follows_the_window_is_still_a_swap(self):
+        # What a scrolling layout actually does: the window that moved is at
+        # the pixel it started on and everything else shifted instead.
+        before = moves.placement([tiled("0xa", (0, 0)), tiled("0xb", (800, 0))])
+        after = moves.placement([tiled("0xa", (1600, 0)), tiled("0xb", (800, 0))])
+        self.assertEqual(moves.swapped("0xb", "left", before, after), "0xa")
+
+    def test_stepping_into_an_empty_cell_is_not_a_collision(self):
+        before = moves.placement([tiled("0xa", (800, 0))])
+        after = moves.placement([tiled("0xa", (0, 0))])
+        self.assertEqual(moves.swapped("0xa", "left", before, after), "")
+
+    def test_landing_short_of_a_far_window_is_not_a_collision(self):
+        # A gap, then a window: it was in the direction of travel, but it is
+        # still on the same side afterwards, so nothing was displaced.
+        before = moves.placement([tiled("0xa", (1600, 0)), tiled("0xb", (0, 0))])
+        after = moves.placement([tiled("0xa", (800, 0)), tiled("0xb", (0, 0))])
+        self.assertEqual(moves.swapped("0xa", "left", before, after), "")
+
+    def test_a_window_that_did_not_move_collided_with_nothing(self):
+        places = moves.placement(self.ROW)
+        self.assertEqual(moves.swapped("0xb", "left", places, places), "")
+
+    def test_a_swap_on_dwindle_rolls_for_a_battle(self):
+        compositor = FakeCompositor("dwindle", "window")
+        daemon = self.daemon(compositor)
+        self.assertTrue(daemon.move("left", 100.0))
+        self.assertEqual(daemon.collisions,
+                         [("0xaaa,0xbbb,left", 100.0, "move")])
+        self.assertEqual(daemon.move_style, "window")
+
+    def test_a_swap_on_a_scrolling_layout_rolls_the_same_way(self):
+        compositor = FakeCompositor("lua:hyprscroll2d", "layout", pans=True)
+        daemon = self.daemon(compositor)
+        self.assertTrue(daemon.move("left", 100.0))
+        self.assertEqual(daemon.collisions,
+                         [("0xaaa,0xbbb,left", 100.0, "move")])
+        self.assertEqual(daemon.move_style, "layout")
+        self.assertEqual(compositor.dispatched, ['hl.dsp.layout("move left")'])
+
+    def test_the_other_style_gets_a_turn_when_the_first_moved_nothing(self):
+        # A layout can differ per workspace, so the name is a hint and not an
+        # answer. A message a layout does not understand moves nothing, and
+        # nothing moving is what the fallback is looking for.
+        compositor = FakeCompositor("lua:hyprscroll2d", "window")
+        daemon = self.daemon(compositor)
+        self.assertTrue(daemon.move("left", 100.0))
+        self.assertEqual(compositor.dispatched,
+                         ['hl.dsp.layout("move left")',
+                          'hl.dsp.window.move({ direction = "l" })'])
+        self.assertEqual(daemon.move_style, "window")
+        self.assertEqual(len(daemon.collisions), 1)
+
+    def test_only_one_of_the_two_styles_can_ever_land(self):
+        # Both understood would be a window moved twice. The loop stops on the
+        # first one that changed anything.
+        compositor = FakeCompositor("lua:hyprscroll2d", "layout")
+        daemon = self.daemon(compositor)
+        daemon.move("left", 100.0)
+        self.assertEqual(len(compositor.dispatched), 1)
+
+    def test_a_move_that_hits_nobody_is_still_a_move(self):
+        compositor = FakeCompositor("dwindle", "window")
+        del compositor.places["0xbbb"]
+
+        def dispatch(command):
+            compositor.dispatched.append(command)
+            compositor.places["0xaaa"] = [0, 0]
+
+        compositor.dispatch = dispatch
+        daemon = self.daemon(compositor)
+        self.assertTrue(daemon.move("left", 100.0))
+        self.assertEqual(daemon.collisions, [])
+
+    def test_a_direction_that_is_not_one_moves_nothing(self):
+        compositor = FakeCompositor()
+        daemon = self.daemon(compositor)
+        self.assertFalse(daemon.move("sideways", 100.0))
+        self.assertEqual(compositor.dispatched, [])
+
+
+class WithoutTheLayoutPlugin(unittest.TestCase):
+    """Demon Slayer's Hyprscroll2D is a private fork, so it is a shortcut and
+    never a requirement."""
+
+    def test_the_move_verb_is_the_trigger_everybody_has(self):
+        ctl = load_ctl()
+        self.assertIn("move", ctl.COMMANDS)
+
+    def test_a_move_still_happens_with_no_daemon_running(self):
+        # A move key that died with the shell would be far more annoying than
+        # a missed battle, so the CLI makes the move itself as a fallback.
+        ctl = load_ctl()
+        self.assertNotIn("move", ctl.OFFLINE)
+        with open(os.path.join(ROOT, "bin", "battles-ctl")) as handle:
+            source = handle.read()
+        self.assertIn('if argument == "move":\n            return move(', source)
+
+    def test_the_cli_and_the_daemon_move_windows_the_same_way(self):
+        ctl = load_ctl()
+        self.assertIs(ctl.moves, moves)
+
+
 class EncounterRumble(unittest.TestCase):
     """A battle opening should be felt, not just seen. The motors live in the
     gamepad plugin, so this is an ask over its socket rather than a write."""
@@ -894,6 +1149,31 @@ class BattleInput(unittest.TestCase):
         self.assertEqual(daemon.battle.phase, "over")
         self.assertEqual(daemon.battle.result, "draw")
 
+    def test_start_again_over_the_closing_line_ends_it_now(self):
+        # The battle is already over and only its last line is on screen.
+        # Pressing the way out a second time should not be ignored.
+        daemon = self.daemon()
+        ended = []
+        daemon.end = lambda now: ended.append(now)
+        now = self.at_the_action_menu(daemon)
+        daemon.on_pad_event(self.press("Start"), now)
+        self.assertEqual(ended, [])
+        daemon.on_pad_event(self.press("Start"), now + 0.5)
+        self.assertEqual(ended, [now + 0.5])
+
+    def test_escape_again_over_the_closing_line_ends_it_now(self):
+        # The overlay's Escape, which goes through the socket rather than the
+        # pad. Same rule: the second one does not wait out the dwell.
+        daemon = self.daemon()
+        ended = []
+        daemon.end = lambda now: ended.append(now)
+        self.at_the_action_menu(daemon)
+        daemon.handle_command("cancel")
+        self.assertEqual(daemon.battle.phase, "over")
+        self.assertEqual(ended, [])
+        daemon.handle_command("cancel")
+        self.assertEqual(len(ended), 1)
+
     def test_losing_the_pad_ends_the_battle(self):
         # The lease was revoked - the gamepad daemon stopped, the focused
         # window took the pad, or our renewal lapsed. With no controller there
@@ -990,7 +1270,22 @@ class WithoutTheGamepadPlugin(unittest.TestCase):
 
     def test_the_trigger_is_the_layout_s_event_not_the_gamepad_s(self):
         self.assertEqual(bd.LAYOUT_COLLISION_EVENT,
+                         "me.schafman.omarchy.plugin.hyprscroll2d:collision")
+
+    def test_the_name_that_layout_used_to_post_is_still_heard(self):
+        # An event name is a plugin id, so that layout renaming itself renamed
+        # the event. An install from before the rename still posts the old
+        # name, and a plugin with no part in the rename should not go quiet
+        # over it.
+        self.assertEqual(bd.LEGACY_LAYOUT_COLLISION_EVENT,
                          "io.github.kirollosatef.hyprscroll2d:collision")
+        with open(os.path.join(ROOT, "bin", "battles")) as handle:
+            source = handle.read()
+        start = source.index("    def read_events(self):")
+        body = source[start:source.index("    def read_pad", start)]
+        for event in ("PAD_COLLISION_EVENT", "LAYOUT_COLLISION_EVENT",
+                      "LEGACY_LAYOUT_COLLISION_EVENT"):
+            self.assertIn(event, body, event)
 
     def test_a_failed_grab_is_not_an_error(self):
         # No gamepad daemon listening: sendto fails, and that is a normal

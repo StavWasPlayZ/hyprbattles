@@ -1,7 +1,8 @@
 # hyprbattles / Hyprland Pokemon Battles
 
 Swap one window with another and, one time in four - the two of them settle it in a turn-based fight instead
-of just handling it like adults.
+of just handling it like adults. On any Hyprland layout: dwindle, master or
+scrolling.
 
 Inspired by Pokemon: Types, HP bars, a move menu, a `FIGHT`/`ITEM`/`RUN` choice, chiptune - and the
 fighters are the windows themselves, still running, captured onto a battle
@@ -26,8 +27,9 @@ where you wanted it, which is also the worst outcome of not having a battle.
 
 | Piece | What it is |
 | --- | --- |
-| [`bin/battles`](bin/battles) | The daemon: watches for a pad-driven collision, rolls the odds, borrows the controller, runs the fight. |
-| [`bin/battles-ctl`](bin/battles-ctl) | Read the state, switch battles on or off, or force one, from anywhere. |
+| [`bin/battles`](bin/battles) | The daemon: moves the window, spots the collision, rolls the odds, borrows the controller, runs the fight. |
+| [`bin/battles-ctl`](bin/battles-ctl) | Move a window, read the state, switch battles on or off, or force one, from anywhere. |
+| [`lib/window_moves.py`](lib/window_moves.py) | Which command moves a window one cell, per layout, and how to tell a swap from a step into an empty cell. |
 | [`lib/battle_rules.py`](lib/battle_rules.py) | The rules: creatures, types, damage, the turn loop. No I/O in it at all. |
 | [`lib/pantry.py`](lib/pantry.py) | The food: read-only readings of free memory, cache, swap, entropy and zombies, and the ledger that keeps them honest. |
 | [`Battle.qml`](Battle.qml) | The battle screen. Draws the snapshot the daemon publishes, and nothing else. |
@@ -39,23 +41,34 @@ Full rules, the trigger path, the escape hatches and how to force one:
 
 ## What it needs
 
-Two other plugins, neither of them required and neither of them linked
-against:
+Hyprland and Python 3. That is the list.
 
-| For | Interface | Required |
+**Any layout works.** The plugin makes the move itself and reads the swap back
+out of Hyprland's own window list, so dwindle, master and a scrolling layout
+all collide the same way - it never has to be told that two windows changed
+places. `lib/window_moves.py` is the whole of the difference between them.
+
+Two other plugins are supported. Neither is required, neither is imported or
+linked against, and neither is looked for on disk - they are reached through
+Hyprland's sockets, so a missing one costs a shortcut rather than raising an
+error:
+
+| Plugin | What it adds | Required |
 | --- | --- | --- |
-| Windows colliding at all, and undoing a swap | The Hyprscroll2D layout's `layoutmsg` dispatcher and its `custom>>` collision event | yes |
-| Playing a battle with a controller | The gamepad plugin's lending API (`grab` / `renew` / `release`) | no |
-| Knowing a collision was the pad's | The gamepad plugin's own `custom>>` collision event | no |
+| Demon Slayer's Hyprscroll2D | Announces every collision itself, so battles trigger from the move keys that layout already binds, with nothing rebound | no |
+| The gamepad plugin | A controller to play with, the narrower pad-only collision event, and a second of both motors as a battle opens (its `docs/PAD-API.md`) | no |
 
-Everything goes through Hyprland's own sockets, so a missing neighbour means
-no battles rather than an error. The gamepad plugin is **optional**: without
-it, battles still trigger from keyboard moves and are fully playable, because
-the overlay holds the keyboard regardless. Both of its interfaces are
-documented in its `docs/PAD-API.md`.
+**Demon Slayer's Hyprscroll2D is a private fork of the original Hyprscroll2D,
+and it is never going to be published** - it stays between its author and
+this one, which is his call and a fair one. So assume you do not have it:
+bind a move key to `battles-ctl move` as below and everything on this page
+works the same, on whatever layout you already use.
 
-Requirements: Python 3, no third-party modules. An audio player (`mpv`,
-`pw-play`, `paplay` or `aplay`) is optional; without one, battles are silent.
+Without the gamepad plugin battles are still fully playable, because the
+overlay holds the keyboard regardless.
+
+An audio player (`mpv`, `pw-play`, `paplay` or `aplay`) is optional; without
+one, battles are silent.
 
 ## Install
 
@@ -63,6 +76,32 @@ Requirements: Python 3, no third-party modules. An audio player (`mpv`,
 omarchy plugin add <this repository> --enable
 omarchy restart shell
 ```
+
+Then put the move on a key. This is what makes windows collide: it moves the
+focused window one cell exactly as the layout underneath it would have, and
+rolls for a battle when that move lands on somebody.
+
+```bash
+# ~/.config/hypr/bindings.lua, where Hyprland is configured in Lua
+local battles = os.getenv("HOME")
+  .. "/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/battles-ctl"
+for _, d in ipairs({ { "H", "left" }, { "J", "down" }, { "K", "up" }, { "L", "right" } }) do
+  o.bind("SUPER + SHIFT + " .. d[1], "Window: Move " .. d[2],
+    battles .. " move " .. d[2])
+end
+```
+
+```ini
+# or, in a hyprland.conf
+bind = SUPER SHIFT, H, exec, ~/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/battles-ctl move left
+```
+
+It replaces whatever move dispatcher was on those keys and keeps doing that
+job: the window moves whether battles are switched on or off, whether the roll
+comes up or not, and whether or not the daemon is even running - with the
+shell down, the command makes the move itself. **On Demon Slayer's
+Hyprscroll2D you can skip this entirely**; that layout posts its own
+collisions, so its own move keys already trigger battles.
 
 Then add the toggle to `~/.config/omarchy/extensions/omarchy-menu.jsonc`:
 
