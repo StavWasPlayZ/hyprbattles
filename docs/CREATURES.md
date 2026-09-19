@@ -263,7 +263,8 @@ hurry came for - then a card per creature, hungriest first. Each card carries
 the application's own icon, the type as its colour, the name, a `x2` when it
 has more than one window open, a star per evolution, the level, the record,
 how long its eldest window has been up, how far it is from the next level,
-and a bar for how much appetite it has left. The
+and a bar for how much of its appetite it has eaten - empty is a
+creature that has had nothing, full is one with no room left. The
 icon is looked up the way the rest of the shell looks one up - the desktop
 entry for the class, then the class as an icon name - and a window that has
 none simply shows its type chip, as it did before.

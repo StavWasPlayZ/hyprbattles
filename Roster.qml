@@ -615,9 +615,11 @@ Panel {
         readonly property bool picked:
             interactive && String(row.address) === root.selected
         readonly property color tint: root.typeColor(row.type)
+        // How full the stomach is, not how much room is left: a bar that
+        // fills as the creature eats reads the way every other bar does.
         readonly property real fullness:
-            Number(row.appetite || 1) > 0
-                ? Number(row.hunger || 0) / Number(row.appetite)
+            Number(row.appetite || 0) > 0
+                ? Number(row.eaten || 0) / Number(row.appetite)
                 : 0
         readonly property bool feedable: root.canFeed(row)
 
@@ -801,10 +803,11 @@ Panel {
                     font.pixelSize: Style.font.caption
                 }
 
-                // How much it can still eat. It empties as
-                // the creature is fed and fills again as
-                // the window ages, which is the whole of
-                // the hunger rule drawn as one bar.
+                // How much of its appetite it has eaten. It
+                // fills as the creature is fed and empties
+                // again as the window ages and the appetite
+                // grows, which is the whole of the hunger
+                // rule drawn as one bar.
                 Rectangle {
                     // An appetite bar means nothing without a window to be
                     // hungry with.
