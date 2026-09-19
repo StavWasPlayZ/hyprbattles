@@ -328,6 +328,55 @@ Panel {
         return !!row && row.canFeed === true && Number(row.hunger || 0) > 0
     }
 
+    // Why a shelf cannot be served, said where the refusal is: the button
+    // itself, instead of "Feed X". A greyed button that will not say what is
+    // wrong sends somebody looking in the wrong place - an empty shelf is the
+    // machine's doing and will refill itself, a full creature is the window's
+    // age and will not. Short, because it has to fit where a name fitted.
+    function refusal(shelf) {
+        if (!shelf || !chosen || servable(shelf)) return ""
+        if (Number(shelf.servings || 0) <= 0)
+            return "No " + String(shelf.name) + " spare"
+        var room = Number(chosen.hunger || 0)
+        var name = String(chosen.name || "It")
+        if (room <= 0) return name + " is full"
+        return name + " has room for " + room + ", not "
+             + Number(shelf.nourish || 0)
+    }
+
+    // The same question about the creature rather than one shelf: why its
+    // Feed button is grey before any food has been picked.
+    function creatureRefusal(row) {
+        if (!row || canFeed(row)) return ""
+        if (row.canFeed !== true) return "Nothing there to feed"
+        return String(row.name || "It") + " is full"
+    }
+
+    // The button says no; this says what to do about it. There is only one
+    // answer and it is to wait, which is worth spelling out - a full creature
+    // otherwise reads as one that is finished rather than one that is busy.
+    // Only ever for room: an empty shelf has nothing to do with uptime.
+    // It takes the first line, on its own: it is the answer to why you cannot
+    // feed, and a line tacked onto the end of a description is read last if
+    // it is read at all.
+    readonly property string roomTip:
+        "TIP: appetite grows the longer a window is open."
+
+    // The tip above whatever the view had to say.
+    function withRoomTip(line, shelf) {
+        if (!noRoom(shelf)) return line
+        return line === "" ? roomTip : roomTip + "\n" + line
+    }
+
+    // Is room the thing in the way - of this shelf, or of anything at all?
+    function noRoom(shelf) {
+        if (!chosen) return false
+        var room = Number(chosen.hunger || 0)
+        if (!shelf) return chosen.canFeed === true && room <= 0
+        return Number(shelf.servings || 0) > 0
+               && room < Number(shelf.nourish || 0)
+    }
+
     // ------------------------------------------------------------- loading
 
     Process {
@@ -410,10 +459,11 @@ Panel {
             root.note = "The meal could not be served."
             return
         }
+        // Stay where you are, on the shelf you picked: a meal is rarely the
+        // only one somebody came to give, and a picker that closes what you
+        // chose makes the second portion as much work as the first. A refusal
+        // stays put for the same reason - the next shelf along may well work.
         root.note = String(parsed.message || "")
-        // A served meal takes you back to the list it came from; a refusal
-        // stays put, because the next shelf along may well work.
-        if (parsed.ok) root.showRoster()
     }
 
     function feed(shelfKey) {
@@ -497,6 +547,10 @@ Panel {
     // appears inside the open one, so nothing is eaten by a second click
     // somebody meant as a second look.
     function touch(key) {
+        // Reading something new answers the question the last message
+        // answered, so the message goes: the tip has one line and what you
+        // just clicked is what it is for.
+        root.note = ""
         root.described = (root.described === String(key)) ? "" : String(key)
     }
 
@@ -504,14 +558,16 @@ Panel {
     // goes shifts everything above it every time you read one - and it says
     // the most specific thing there is to say.
     readonly property string tip: {
+        // What just happened comes first, and only until the next click:
+        // a meal fed out of an open shelf would otherwise have nowhere to be
+        // read, the shelf's own description sitting on top of it.
+        if (note !== "")
+            return view === "feed" ? withRoomTip(note, null) : note
         var shelf = shelfFor(described)
         if (shelf) {
             var line = String(shelf.name) + ": " + String(shelf.note || "")
-            if (view === "feed" && !servable(shelf))
-                line += "  Not enough to go round."
-            return line
+            return view === "feed" ? withRoomTip(line, shelf) : line
         }
-        if (note !== "") return note
         if (view === "roster") return ""
         if (view === "sleeping")
             return "Nothing happens while a window is shut. Open it and it "
@@ -520,7 +576,8 @@ Panel {
             if (asleep)
                 return "Shut. It keeps its level and its moves; it cannot eat "
                      + "until it is open again."
-            return chosen ? String(chosen.title || chosen.name) : ""
+            return withRoomTip(chosen ? String(chosen.title || chosen.name) : "",
+                               null)
         }
         if (view === "moves") {
             var move = moveFor(described)
@@ -625,6 +682,10 @@ Panel {
 
         height: card.height + Style.spacing.md * 2
         radius: Style.cornerRadius
+        // A shut window is drawn faded, the whole card at once: saying so in
+        // words cost a line on every sleeping card to repeat what the list
+        // itself already means.
+        opacity: row.sleeping ? 0.67 : 1.0
         // Every creature lives in a box of its own: a list
         // of bare rows on a panel this busy reads as one
         // paragraph rather than six things. The box is
@@ -785,6 +846,17 @@ Panel {
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.caption
                     }
+
+                    // Omarchy's own suspend mark, because a shut window is
+                    // asleep in exactly the sense that menu row means.
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: !!creature.row.sleeping
+                        text: "󰒲"
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.body
+                    }
                 }
 
                 Text {
@@ -827,16 +899,17 @@ Panel {
                 }
 
                 Text {
+                    // Nothing is said about a shut window here: the faded
+                    // card and the sleep mark say it, and an appetite line
+                    // would be a number it does not have.
+                    visible: !creature.row.sleeping
                     width: parent.width
-                    text: creature.row.sleeping
-                        ? "Shut - it keeps its level and its moves"
-                        : (creature.row.canEvolveNow
-                           ? "One meal from evolving"
-                           : Number(creature.row.hunger || 0) + " of "
-                             + Number(creature.row.appetite || 0)
-                             + " appetite left")
-                    color: (creature.row.canEvolveNow && !creature.row.sleeping)
-                        ? creature.tint : root.dim
+                    text: creature.row.canEvolveNow
+                        ? "One meal from evolving"
+                        : Number(creature.row.hunger || 0) + " of "
+                          + Number(creature.row.appetite || 0)
+                          + " appetite left"
+                    color: creature.row.canEvolveNow ? creature.tint : root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                 }
@@ -1686,12 +1759,23 @@ Panel {
                 Text {
                     id: feedBarLabel
                     anchors.centerIn: parent
-                    text: feedBar.onMoves
-                        ? ("Teach " + (feedBar.move ? String(feedBar.move.name) : "")
-                           + " into slot " + (root.slot + 1))
-                        : ("󱁂  Feed " + (feedBar.onWindow
-                           ? (root.chosen ? String(root.chosen.name) : "")
-                           : (feedBar.shelf ? String(feedBar.shelf.name) : "")))
+                    text: {
+                        if (feedBar.onMoves)
+                            return "Teach "
+                                 + (feedBar.move ? String(feedBar.move.name) : "")
+                                 + " into slot " + (root.slot + 1)
+                        // A refusal takes the button's words but not its
+                        // mark: the row is still the one that feeds, and a
+                        // line that loses its icon reads as a different
+                        // button rather than the same one saying no.
+                        var why = feedBar.onWindow
+                            ? root.creatureRefusal(root.chosen)
+                            : root.refusal(feedBar.shelf)
+                        if (why !== "") return "󱁂  " + why
+                        return "󱁂  Feed " + (feedBar.onWindow
+                            ? (root.chosen ? String(root.chosen.name) : "")
+                            : (feedBar.shelf ? String(feedBar.shelf.name) : ""))
+                    }
                     color: root.foreground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.body

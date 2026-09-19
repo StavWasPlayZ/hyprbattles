@@ -299,9 +299,19 @@ button inside it; clicking the shelf again closes it. Feeding is never the
 click on the row itself, so nothing is eaten by a second click somebody meant
 as a second look. A shelf the machine cannot spare, or one this
 window has no room for, is dimmed rather than hidden: the refusal is
-information. A meal drops you back on the list of windows with what happened;
-a refusal leaves you where you are, because the next shelf along may well
-work.
+information, and the button says which of the two it is instead of offering
+a meal it cannot serve - *No ZOMBIES spare* is the machine's doing and
+will right itself, *FOOT has room for 12, not 34* is the window's age and
+will not. When room is what is missing, the one thing there is to do about it
+takes the tip's first line, above the description - *TIP: appetite grows the
+longer a window is open* - because a full creature otherwise reads as one
+that is finished rather than one that is busy, and a line tacked on the end
+is read last if it is read at all.
+Feeding leaves you on the food and on the shelf you picked, meal or refusal:
+one portion is rarely the only one somebody came to give, and a picker that
+closed what you chose would make the second portion as much work as the
+first. What happened is the tip until the next click, above the open shelf's
+own description, because there is nowhere else for it to be read.
 
 **All food**, reached from the button at the top, for when the question is
 "what has this machine got spare" rather than "what do I feed this". The same
@@ -311,7 +321,9 @@ shelves, with nothing to spend them on, and clicking one still reads it out.
 empty there. It is the one line that answers "what is this thing", and a line
 you have to scroll to find cannot do that - so the shelves themselves carry
 only their numbers and the description lives here. The list of windows has no
-tip at all: every row already says what it is.
+tip at all: every row already says what it is. A grey **Feed** button says
+why it is grey - *FOOT is full* - because the refusal belongs where the
+button was, not in a line somebody has to look away to read.
 
 Escape steps back out of a view before it closes the panel, so one key is the
 way out of wherever you are.
