@@ -12,21 +12,21 @@ plugin. Pure Python 3 stdlib + QML. No build step, no third-party modules.
 ## Commands
 
 ```bash
-make check                      # tests + byte-compile + manifest/asset presence + omarchy plugin validate
-make test                       # tests only
+make check                          # tests + byte-compile + manifest/asset presence + omarchy plugin validate
+make test                           # tests only
 python3 tests/battles.py Damage                    # one test class
 python3 tests/battles.py Eating.test_eating_heals_and_costs_the_turn   # one test
-make audio                      # regenerate the committed WAVs (bin/make-battle-audio)
-bin/battles-ctl move left       # move the focused window, roll if it collided
-bin/battles-ctl                 # current battle state as JSON (needs the daemon)
-bin/battles-ctl debug           # force a battle; pick N / advance to drive it
-bin/battles-ctl pantry          # the food shelves, read-only, daemon or not
-bin/battles-ctl roster          # every window as a creature (--json for the panel)
-bin/battles-ctl feed <addr> <shelf>   # one portion, daemon or not
-bin/battles-ctl sleeping        # creatures whose windows are shut
-bin/battles-ctl moves <addr>    # the four carried, and the whole learnset
-bin/battles-ctl teach <addr> <slot> <TYPE:n>   # swap one of the four
-bin/battles-ctl assets          # asset mode + what every sound resolves to
+make audio                          # regenerate the committed WAVs (bin/make-battle-audio)
+bin/hyprbattles-ctl move left       # move the focused window, roll if it collided
+bin/hyprbattles-ctl                 # current battle state as JSON (needs the daemon)
+bin/hyprbattles-ctl debug           # force a battle; pick N / advance to drive it
+bin/hyprbattles-ctl pantry          # the food shelves, read-only, daemon or not
+bin/hyprbattles-ctl roster          # every window as a creature (--json for the panel)
+bin/hyprbattles-ctl feed <addr> <shelf>   # one portion, daemon or not
+bin/hyprbattles-ctl sleeping        # creatures whose windows are shut
+bin/hyprbattles-ctl moves <addr>    # the four carried, and the whole learnset
+bin/hyprbattles-ctl teach <addr> <slot> <TYPE:n>   # swap one of the four
+bin/hyprbattles-ctl assets          # asset mode + what every sound resolves to
 ```
 
 Forcing/inspecting through the shell instead of the socket:
@@ -56,11 +56,11 @@ no pad and no screen:
 | Moves | `lib/window_moves.py` | Which command moves a window one cell per layout, and whether a move swapped two windows. **Zero I/O.** |
 | Wiring | `bin/battles` (daemon) | Sockets, sound, pad lease, bar toggle, the roll, publishing the snapshot. |
 | Picture | `Battle.qml` + `BattleFighter/BattleStatusBox/BattleTypeChip/PixelText.qml` | Draws the snapshot and nothing else. Two scenes: `scene: "battle"` and `scene: "evolve"`. |
-| Panel | `Roster.qml` (bar widget) | The switch, one card per window, and the food. Reads `battles-ctl roster --json`, writes through `battles-ctl feed`. Cannot reach a window. Agent cards wear Omarchy's own marks (`shell/plugins/agents/assets/*.svg`, then the default-agent menu glyph), which is why the agent names are Omarchy's names. |
+| Panel | `Roster.qml` (bar widget) | The switch, one card per window, and the food. Reads `hyprbattles-ctl roster --json`, writes through `hyprbattles-ctl feed`. Cannot reach a window. Agent cards wear Omarchy's own marks (`shell/plugins/agents/assets/*.svg`, then the default-agent menu glyph), which is why the agent names are Omarchy's names. |
 
 Data flow: daemon writes `$XDG_RUNTIME_DIR/hyprscroll2d-battle.json` after every
 change → `Battle.qml` watches that file. Input goes the other way: the overlay
-holds the keyboard and shells out to `bin/battles-ctl key <name>`, which talks
+holds the keyboard and shells out to `bin/hyprbattles-ctl key <name>`, which talks
 to `$XDG_RUNTIME_DIR/hyprscroll2d-battle.sock` (whitespace verb + args in, JSON
 state out — `Daemon.handle_command`). Keyboard names map onto forwarded
 controller events (`Daemon.KEYS`) so there is one set of handlers, not two.
@@ -82,7 +82,7 @@ never present it as a dependency.
 
 Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
 
-1. **The one everybody has.** A key bound to `battles-ctl move <dir>` →
+1. **The one everybody has.** A key bound to `hyprbattles-ctl move <dir>` →
    daemon's `move` verb → window list, dispatch, window list again. Two
    windows trading places is a collision; one window landing in an empty cell
    is not. `lib/window_moves.py` picks the command from `getoption
@@ -90,7 +90,7 @@ Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
    `hl.dsp.window.move({ direction = "l" })` for everything else) and falls
    back to the other style when the first moved nothing, so a per-workspace
    layout works. The move happens with battles off, on a losing roll, and with
-   the daemon stopped — `battles-ctl` makes it itself then.
+   the daemon stopped — `hyprbattles-ctl` makes it itself then.
 2. **The shortcut.** Both plugins post
    `custom>>...:collision,<addr>,<addr>,<dir>` on Hyprland's event socket
    (payload rides inside the event *name*, comma separated, because
@@ -164,8 +164,8 @@ Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
 `battles-assets` (the mode), `pantry.json` (the eaten-portions ledger) and
 `creatures.json` (what each class has earned, and what each live window has
 eaten).
-Files, because the Omarchy menu row's `checked` condition and `battles-ctl`
-must answer while the shell is restarting. `battles-ctl` reads/writes them
+Files, because the Omarchy menu row's `checked` condition and `hyprbattles-ctl`
+must answer while the shell is restarting. `hyprbattles-ctl` reads/writes them
 directly and only *nudges* the daemon afterwards.
 
 `creatures.json` is also the sleeping list: the daemon writes a record for
@@ -190,7 +190,7 @@ file by mode (`auto`/`generated`/`custom`), overridable for one run with
   green/amber/red, which must mean the same thing everywhere.
 - Lettering is the original 5×7 font in `PixelText.qml`, drawn square by square
   on a Canvas — no font files.
-- `tests/battles.py` loads the extension-less `bin/battles` and `bin/battles-ctl`
+- `tests/battles.py` loads the extension-less `bin/battles` and `bin/hyprbattles-ctl`
   through `SourceFileLoader`; new executables there need the same treatment.
 - Docs carry the reasoning: `docs/BATTLES.md` (rules, trigger, sound, escape
   hatches), `docs/FOOD.md` (the pantry and its ledger), `docs/CREATURES.md`

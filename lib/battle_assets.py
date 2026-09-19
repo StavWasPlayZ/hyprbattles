@@ -41,7 +41,7 @@ ENV_VAR = "HYPRBATTLES_ASSETS"
 MODES = ("auto", "generated", "custom")
 DEFAULT_MODE = "auto"
 
-# Every name the daemon ever asks for, in the order `battles-ctl assets`
+# Every name the daemon ever asks for, in the order `hyprbattles-ctl assets`
 # prints them: the music first, then the one-shots.
 SOUNDS = ("battle-theme.wav", "battle-select.wav", "battle-hit.wav",
           "battle-heal.wav", "battle-evolve.wav", "battle-levelup.wav",
@@ -67,7 +67,7 @@ def mode_path(environ=None):
 def saved_mode(environ=None, path=None):
     """What the state file says, ignoring the environment.
 
-    Separate from mode() so `battles-ctl assets` can say "custom, because
+    Separate from mode() so `hyprbattles-ctl assets` can say "custom, because
     HYPRBATTLES_ASSETS says so" rather than leaving someone to wonder why
     the setting they saved is not the setting in force.
     """
@@ -145,7 +145,7 @@ def directories(generated=None, custom=None, environ=None):
 
 def resolution(which=None, generated=None, custom=None, environ=None,
                names=SOUNDS):
-    """What every sound resolves to, for `battles-ctl assets` to print.
+    """What every sound resolves to, for `hyprbattles-ctl assets` to print.
 
     A list of (name, path or None, "generated" | "custom" | "missing"), which
     is the answer to "why is my file not playing".

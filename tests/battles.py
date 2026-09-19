@@ -38,7 +38,7 @@ import window_moves as moves                                  # noqa: E402
 
 def load_ctl():
     loader = importlib.machinery.SourceFileLoader(
-        "battles_ctl", os.path.join(ROOT, "bin", "battles-ctl"))
+        "hyprbattles_ctl", os.path.join(ROOT, "bin", "hyprbattles-ctl"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
@@ -949,7 +949,7 @@ class AnyLayout(unittest.TestCase):
     """Moving a window without a layout plugin to do it.
 
     Demon Slayer's Hyprscroll2D is a private fork, so most desktops do not
-    have it and never will. `battles-ctl move` is the trigger path for those:
+    have it and never will. `hyprbattles-ctl move` is the trigger path for those:
     the daemon makes the move itself and works out from the window list who
     was next to whom, which comes to the same thing on dwindle, on master and
     on a scrolling layout.
@@ -1135,7 +1135,7 @@ class WithoutTheLayoutPlugin(unittest.TestCase):
         # a missed battle, so the CLI makes the move itself as a fallback.
         ctl = load_ctl()
         self.assertNotIn("move", ctl.OFFLINE)
-        with open(os.path.join(ROOT, "bin", "battles-ctl")) as handle:
+        with open(os.path.join(ROOT, "bin", "hyprbattles-ctl")) as handle:
             source = handle.read()
         self.assertIn('if argument == "move":\n            return move(', source)
 
@@ -2667,7 +2667,7 @@ class FeedingFromThePanel(unittest.TestCase):
         # The daemon and the CLI both feed, and the CLI feeds with the daemon
         # stopped. If either forgot the window list, that way in would be the
         # one appetite per window again - and the second helping with it.
-        for name in ("battles", "battles-ctl"):
+        for name in ("battles", "hyprbattles-ctl"):
             with open(os.path.join(ROOT, "bin", name)) as handle:
                 source = handle.read()
             self.assertIn("clients=clients", source,

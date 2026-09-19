@@ -36,7 +36,7 @@ Item {
     readonly property string statePath: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/hyprscroll2d-battle.json"
     readonly property string wallpaper: Quickshell.env("HOME") + "/.local/state/omarchy/current/background"
     readonly property string controlCommand: decodeURIComponent(
-        Qt.resolvedUrl("bin/battles-ctl").toString().replace(/^file:\/\//, ""))
+        Qt.resolvedUrl("bin/hyprbattles-ctl").toString().replace(/^file:\/\//, ""))
 
     readonly property bool active: state.active === true
     // Two things can be on this screen, and only ever one at a time: a

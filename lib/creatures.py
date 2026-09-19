@@ -491,8 +491,8 @@ class Store:
 
 # ------------------------------------------------------------- the roster
 #
-# What the bar panel shows, and what `battles-ctl roster` prints. It lives
-# here rather than in the daemon because `battles-ctl` answers the same
+# What the bar panel shows, and what `hyprbattles-ctl roster` prints. It lives
+# here rather than in the daemon because `hyprbattles-ctl` answers the same
 # question with the daemon stopped, and two copies of this would be two
 # answers - the same reason the daemon and the CLI share lib/window_moves.py.
 
@@ -556,7 +556,7 @@ def instances(window, clients, proc="/proc"):
     A creature is its class, so two Brave windows are two bodies of one
     creature and not two creatures. The eldest speaks for it: it is the one
     that has bought the appetite, and its address is the one the panel and
-    `battles-ctl` are handed back.
+    `hyprbattles-ctl` are handed back.
     """
     key = species_key(window or {}, proc)
     same = [one for one in clients or []

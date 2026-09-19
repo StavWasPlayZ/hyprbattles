@@ -31,7 +31,7 @@ Seven files come out:
 
 Any of the six can be replaced without touching the repository by dropping a
 file of the same name into $XDG_CONFIG_HOME/omarchy/hyprbattles/assets/;
-see lib/battle_assets.py and `bin/battles-ctl assets`.
+see lib/battle_assets.py and `bin/hyprbattles-ctl assets`.
 """
 
 import array

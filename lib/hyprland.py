@@ -1,7 +1,7 @@
 """Just enough of Hyprland's sockets, for the two programs that need them.
 
 `bin/battles` listens on the event socket and asks the command socket what
-windows exist; `bin/battles-ctl` needs the same command socket to move a
+windows exist; `bin/hyprbattles-ctl` needs the same command socket to move a
 window when the daemon is not running. One copy, so they cannot disagree
 about where the sockets are or how a reply is read.
 

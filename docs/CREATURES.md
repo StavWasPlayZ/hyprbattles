@@ -61,7 +61,7 @@ not change, so now none of them do.
 
 Records live in `~/.local/state/hyprscroll2d/creatures.json`, next to the
 pantry's ledger and the on/off flag, for the same reason those are files:
-`battles-ctl` has to be able to answer while the shell is restarting.
+`hyprbattles-ctl` has to be able to answer while the shell is restarting.
 
 ## Levels
 
@@ -159,9 +159,9 @@ and a closed window produces nothing real to read. Idle gains would be the
 first invented number in the game.
 
 ```bash
-battles-ctl sleeping                     # the ones whose windows are shut
-battles-ctl moves kitty                  # they answer to their class name
-battles-ctl teach kitty 3 NET:0          # and can still be given a loadout
+hyprbattles-ctl sleeping                     # the ones whose windows are shut
+hyprbattles-ctl moves kitty                  # they answer to their class name
+hyprbattles-ctl teach kitty 3 NET:0          # and can still be given a loadout
 ```
 
 ## Moves
@@ -200,8 +200,8 @@ that selected it.
 **From the command line.**
 
 ```bash
-battles-ctl moves <address>                 # the four, then everything known
-battles-ctl teach <address> <slot> NET:0    # slot 0-3, move as TYPE:index
+hyprbattles-ctl moves <address>                 # the four, then everything known
+hyprbattles-ctl teach <address> <slot> NET:0    # slot 0-3, move as TYPE:index
 ```
 
 A refusal is a sentence, not an error: *FOOT learns DNS FLOOD at level 8*,
@@ -316,8 +316,8 @@ Escape steps back out of a view before it closes the panel, so one key is the
 way out of wherever you are.
 
 The panel **draws and asks; it decides nothing**. Everything it shows comes
-from `battles-ctl roster --json`, and feeding goes back through
-`battles-ctl feed <address> <shelf>`, which is the same path the daemon takes.
+from `hyprbattles-ctl roster --json`, and feeding goes back through
+`hyprbattles-ctl feed <address> <shelf>`, which is the same path the daemon takes.
 Both work with the daemon stopped, because both are the files rather than the
 process; what a stopped daemon costs you is the evolution animation, not the
 evolution.
@@ -333,9 +333,9 @@ window can close while you are looking at the list.
 ## From the command line
 
 ```bash
-battles-ctl roster                  # every open window as a creature
-battles-ctl roster --json           # the same, as the panel reads it
-battles-ctl feed <address> staple   # one portion of FREE RAM
+hyprbattles-ctl roster                  # every open window as a creature
+hyprbattles-ctl roster --json           # the same, as the panel reads it
+hyprbattles-ctl feed <address> staple   # one portion of FREE RAM
 ```
 
 `roster` prints one line per creature: name - with a `x2` when more than one

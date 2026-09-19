@@ -12,7 +12,7 @@ Both end up doing the same thing to the desktop, so battles do not care which
 one ran - only that two windows changed places. This module is the one place
 that knows the difference: which command to send, which one to fall back to,
 and how to tell a swap from a step into an empty cell. It is pure: no sockets,
-no subprocesses, no compositor. `bin/battles` and `bin/battles-ctl` both go
+no subprocesses, no compositor. `bin/battles` and `bin/hyprbattles-ctl` both go
 through it, so there is one answer to "how is a window moved" rather than two
 that can drift apart.
 

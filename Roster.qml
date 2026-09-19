@@ -17,8 +17,8 @@
 // spare" rather than "what do I feed this".
 //
 // It draws and asks; it decides nothing. Everything on screen comes out of
-// `battles-ctl roster --json`, and feeding goes back through
-// `battles-ctl feed <address> <shelf>`, which is the same path the daemon
+// `hyprbattles-ctl roster --json`, and feeding goes back through
+// `hyprbattles-ctl feed <address> <shelf>`, which is the same path the daemon
 // takes. Both work with the daemon stopped, so this panel keeps answering
 // while the shell is restarting.
 //
@@ -42,7 +42,7 @@ Panel {
     manageIpc: false
 
     readonly property string controlCommand: decodeURIComponent(
-        Qt.resolvedUrl("bin/battles-ctl").toString().replace(/^file:\/\//, ""))
+        Qt.resolvedUrl("bin/hyprbattles-ctl").toString().replace(/^file:\/\//, ""))
 
     readonly property color foreground: bar ? bar.foreground : Color.foreground
     readonly property color dim: Qt.darker(foreground, 1.55)

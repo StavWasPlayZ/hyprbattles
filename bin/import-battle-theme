@@ -16,8 +16,8 @@ so a clone stays clean however much music ends up in it:
     bin/import-battle-theme ~/some-track.mp3    # take a new one
 
 In `auto` - the default - a file there simply wins over the generated one,
-for that name only. `bin/battles-ctl assets` says which of the two every
-sound came out of, and `bin/battles-ctl assets generated` puts the shipped
+for that name only. `bin/hyprbattles-ctl assets` says which of the two every
+sound came out of, and `bin/hyprbattles-ctl assets generated` puts the shipped
 theme back without moving anything.
 
 What you put there, and whether you have the right to, is between you and
@@ -84,7 +84,7 @@ def main(argv):
     with wave.open(TARGET) as handle:
         seconds = handle.getnframes() / float(handle.getframerate())
     print("battle-theme.wav   %5.1fs   %s" % (seconds, TARGET))
-    print("`battles-ctl assets` to check it is the one that will play.")
+    print("`hyprbattles-ctl assets` to check it is the one that will play.")
     return 0
 
 

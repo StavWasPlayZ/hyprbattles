@@ -7,7 +7,7 @@ between the two windows and publishes it for the overlay (Battle.qml) to draw.
 
 A collision reaches it two ways, and it needs no plugin for either:
 
-  * it moves the window itself, on `battles-ctl move <direction>`, and sees
+  * it moves the window itself, on `hyprbattles-ctl move <direction>`, and sees
     the swap in Hyprland's own window list. That works on dwindle, on master
     and on a scrolling layout alike - lib/window_moves.py is the whole of the
     difference between them;
@@ -73,13 +73,13 @@ CREATURES_PATH = creatures.STORE_PATH
 BAR_FLAG_PATH = os.path.join(STATE_HOME, "omarchy", "toggles", "bar-off")
 # What ships. A user's own files live outside the checkout and win or lose
 # per name according to the assets mode; lib/battle_assets.py is the whole of
-# that decision, and `battles-ctl assets` prints what it came to.
+# that decision, and `hyprbattles-ctl assets` prints what it came to.
 ASSETS = battle_assets.GENERATED
 
 # What Demon Slayer's Hyprscroll2D posts whenever a move swaps two windows
 # instead of stepping into an empty cell, whatever asked for the move. That
 # layout is a private fork nobody else has, so it is a shortcut rather than a
-# requirement: `battles-ctl move` sees the same swap on any layout, by looking
+# requirement: `hyprbattles-ctl move` sees the same swap on any layout, by looking
 # at the window list either side of the move.
 LAYOUT_COLLISION_EVENT = "me.schafman.omarchy.plugin.hyprscroll2d:collision"
 # And the gamepad plugin's narrower version of the same thing, posted only
@@ -123,7 +123,7 @@ class Sound:
     def __init__(self, assets=None, custom=None):
         # Two directories, not one: what shipped, and whatever the user put in
         # their config. Which of the two a given name comes from is decided
-        # per play, so `battles-ctl assets custom` takes effect on the next
+        # per play, so `hyprbattles-ctl assets custom` takes effect on the next
         # sound rather than on the next shell restart.
         self.assets = ASSETS if assets is None else assets
         self.custom = battle_assets.custom_dir() if custom is None else custom
@@ -320,7 +320,7 @@ class Daemon:
         # nothing but its own ledger. Nothing is dropped, freed or killed.
         self.pantry = pantry.Pantry(ledger=pantry.Ledger(LEDGER_PATH))
         # Levels, wins and appetites. Read on every roster and every feed
-        # rather than cached: `battles-ctl` writes the same file, and a menu
+        # rather than cached: `hyprbattles-ctl` writes the same file, and a menu
         # that disagrees with the daemon would be a second answer.
         self.creatures = creatures.Store(CREATURES_PATH)
         self.selector = selectors.DefaultSelector()
@@ -422,7 +422,7 @@ class Daemon:
         """Move the focused window one cell, and roll if it collided.
 
         This is the trigger path for everybody: bind a direction to
-        `battles-ctl move <direction>` and the daemon makes the move itself,
+        `hyprbattles-ctl move <direction>` and the daemon makes the move itself,
         which is how it knows a swap happened without any layout plugin
         telling it. Two window lists, taken either side of the move, are the
         whole of the detection - so dwindle, master and a scrolling layout all
@@ -503,7 +503,7 @@ class Daemon:
         self.scene = None
         self.source = source
         # A d-pad collision was made with a pad in hand; everything else -
-        # a key bound to `battles-ctl move`, the layout plugin, debug - was
+        # a key bound to `hyprbattles-ctl move`, the layout plugin, debug - was
         # not, until a button says otherwise.
         self.input = "pad" if source == "pad" else "keys"
         # Always ask for the controller, even for a battle a keyboard started:

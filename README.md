@@ -47,7 +47,7 @@ where you wanted it, which is also the worst outcome of not having a battle.
 | Piece | What it is |
 | --- | --- |
 | [`bin/battles`](bin/battles) | The daemon: moves the window, spots the collision, rolls the odds, borrows the controller, runs the fight. |
-| [`bin/battles-ctl`](bin/battles-ctl) | Move a window, read the state, switch battles on or off, or force one, from anywhere. |
+| [`bin/hyprbattles-ctl`](bin/hyprbattles-ctl) | Move a window, read the state, switch battles on or off, or force one, from anywhere. |
 | [`lib/window_moves.py`](lib/window_moves.py) | Which command moves a window one cell, per layout, and how to tell a swap from a step into an empty cell. |
 | [`lib/battle_rules.py`](lib/battle_rules.py) | The rules: creatures, types, damage, the turn loop. No I/O in it at all. |
 | [`lib/pantry.py`](lib/pantry.py) | The food: read-only readings of free memory, cache, swap, entropy, idle cycles and zombies, and the ledger that keeps them honest. |
@@ -83,7 +83,7 @@ error:
 **Demon Slayer's Hyprscroll2D is a private fork of the original Hyprscroll2D,
 and it is never going to be published** - it stays between its author and
 this one, which is his call and a fair one. So assume you do not have it:
-bind a move key to `battles-ctl move` as below and everything on this page
+bind a move key to `hyprbattles-ctl move` as below and everything on this page
 works the same, on whatever layout you already use.
 
 Without the gamepad plugin battles are still fully playable, because the
@@ -106,7 +106,7 @@ rolls for a battle when that move lands on somebody.
 ```bash
 # ~/.config/hypr/bindings.lua, where Hyprland is configured in Lua
 local battles = os.getenv("HOME")
-  .. "/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/battles-ctl"
+  .. "/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/hyprbattles-ctl"
 for _, d in ipairs({ { "H", "left" }, { "J", "down" }, { "K", "up" }, { "L", "right" } }) do
   o.bind("SUPER + SHIFT + " .. d[1], "Window: Move " .. d[2],
     battles .. " move " .. d[2])
@@ -115,7 +115,7 @@ end
 
 ```ini
 # or, in a hyprland.conf
-bind = SUPER SHIFT, H, exec, ~/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/battles-ctl move left
+bind = SUPER SHIFT, H, exec, ~/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/hyprbattles-ctl move left
 ```
 
 It replaces whatever move dispatcher was on those keys and keeps doing that
@@ -128,7 +128,7 @@ collisions, so its own move keys already trigger battles.
 Then add the toggle to `~/.config/omarchy/extensions/omarchy-menu.jsonc`:
 
 ```jsonc
-"trigger.toggle.window-battles": {"icon":"\udb81\udf87","label":"Window Battles","aliases":["battles","hyprbattles","pokemon"],"when":"test -x $HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/battles-ctl","checked":"[ \"$($HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/battles-ctl enabled)\" = true ]","action":"$HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/battles-ctl toggle"},
+"trigger.toggle.window-battles": {"icon":"\udb81\udf87","label":"Window Battles","aliases":["battles","hyprbattles","pokemon"],"when":"test -x $HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/hyprbattles-ctl","checked":"[ \"$($HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/hyprbattles-ctl enabled)\" = true ]","action":"$HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/hyprbattles-ctl toggle"},
 ```
 
 It lands under **Trigger -> Toggle**, beside the other switches, with a tick
@@ -152,8 +152,8 @@ it lights a small red dot only when a creature is one meal from evolving.
 The switch at the top of the bar panel, the menu row, or:
 
 ```bash
-bin/battles-ctl off        # or on, or toggle
-bin/battles-ctl enabled    # true / false
+bin/hyprbattles-ctl off        # or on, or toggle
+bin/hyprbattles-ctl enabled    # true / false
 ```
 
 Off means no battle can start at all - it is checked before the roll - and a
@@ -173,12 +173,12 @@ name into `~/.config/omarchy/hyprbattles/assets/` - outside the checkout,
 so a clone stays clean however much music ends up in it:
 
 ```bash
-bin/battles-ctl assets              # the mode, and which file every sound
-                                    # is actually resolving to
-bin/battles-ctl assets generated    # ignore your files, for an A/B
-bin/battles-ctl assets custom       # play only your files
-bin/battles-ctl assets auto         # yours when there is one, else the
-                                    # generated one. Per file. The default.
+bin/hyprbattles-ctl assets              # the mode, and which file every sound
+                                        # is actually resolving to
+bin/hyprbattles-ctl assets generated    # ignore your files, for an A/B
+bin/hyprbattles-ctl assets custom       # play only your files
+bin/hyprbattles-ctl assets auto         # yours when there is one, else the
+                                        # generated one. Per file. The default.
 ```
 
 `HYPRBATTLES_ASSETS=generated` overrides the saved mode for one run, and

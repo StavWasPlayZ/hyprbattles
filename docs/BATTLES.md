@@ -17,7 +17,7 @@ where you wanted it, which is also the worst outcome of not having a battle.
 
 Three things have to be true:
 
-- battles are **switched on** - the bar widget, or `bin/battles-ctl on`;
+- battles are **switched on** - the bar widget, or `bin/hyprbattles-ctl on`;
 - the move **collided** - it landed on another window and swapped the two,
   rather than stepping into an empty cell;
 - the 25% roll came up.
@@ -27,7 +27,7 @@ It does not matter what asked for the move. A window thrown with
 d-pad, and both are played the same way: the overlay takes the keyboard, and
 borrows the controller as well if there is one.
 
-The move itself is never conditional on any of this. `battles-ctl move` moves
+The move itself is never conditional on any of this. `hyprbattles-ctl move` moves
 the window with battles switched off, on a losing roll, and with the daemon
 stopped - in which case the command makes the move itself rather than asking
 for it. A move key that died with the shell would be a far worse bargain than
@@ -41,7 +41,7 @@ There is a six second quiet period afterwards, so a run of collisions cannot
 stack battles on top of each other, and a battle can never start another one.
 
 **No layout plugin is required.** The daemon makes the move itself, on
-`battles-ctl move <direction>`, and compares Hyprland's window list either
+`hyprbattles-ctl move <direction>`, and compares Hyprland's window list either
 side of it: two windows standing where the other one was is a collision, one
 window in a cell that was empty is not. Dwindle, master and a scrolling layout
 therefore collide the same way, and the only thing that differs between them
@@ -59,7 +59,7 @@ actually in the way. Centres do not care how wide either window was drawn.
 never to be published, and that is its author's call - announces its own
 collisions, so on it the move keys it already binds trigger battles with
 nothing rebound. That is a shortcut for one desktop, not a dependency: without
-it, bind a key to `battles-ctl move` and nothing else changes.
+it, bind a key to `hyprbattles-ctl move` and nothing else changes.
 
 **The gamepad plugin is optional.** It adds a controller to play with, the
 narrower pad-only collision event, and a second of both motors flat out as a
@@ -76,11 +76,11 @@ nothing when it is not.
 
 ## The trigger path
 
-The one everybody has - a key bound to `battles-ctl move left`:
+The one everybody has - a key bound to `hyprbattles-ctl move left`:
 
 ```
 SUPER + SHIFT + H
-  -> bin/battles-ctl move left  ->  the daemon's `move` verb
+  -> bin/hyprbattles-ctl move left  ->  the daemon's `move` verb
        -> the window list now
             -> hl.dsp.window.move({ direction = "l" })   (dwindle, master)
                or hl.dsp.layout("move left")             (a scrolling layout)
@@ -363,7 +363,7 @@ worth knowing about:
 
 **Trigger -> Toggle -> Window Battles** in the Omarchy menu turns the whole
 feature on and off, with a tick on the row while it is on. The first thing in
-the bar panel is the same switch, and `bin/battles-ctl on|off|toggle` is the
+the bar panel is the same switch, and `bin/hyprbattles-ctl on|off|toggle` is the
 same switch from a script. All three read and write one file, so none of them
 can disagree.
 
@@ -382,7 +382,7 @@ The setting lives in `~/.local/state/hyprscroll2d/battles-disabled`, presence
 meaning off - the same pattern the minimap's hidden flag and the gamepad's
 mode file use. It is deliberately a **file rather than a running process**:
 the menu row's `checked` condition has to be able to answer while the shell is
-restarting, and turning battles off has to work then too. `battles-ctl` reads
+restarting, and turning battles off has to work then too. `hyprbattles-ctl` reads
 and writes it directly and only nudges the daemon afterwards, so the switch
 never depends on anything being up.
 
@@ -457,11 +457,11 @@ Which of the two directories wins is a mode:
 | `custom` | Only your files. A name you have not supplied is silent, which is what makes this a real test of your own set rather than a second `auto`. |
 
 ```bash
-bin/battles-ctl assets                  # the mode, and what every sound
-                                        # is actually resolving to
-bin/battles-ctl assets generated        # A/B against what ships
-bin/battles-ctl assets auto             # back to the default
-HYPRBATTLES_ASSETS=custom bin/battles-ctl assets   # one run only
+bin/hyprbattles-ctl assets                  # the mode, and what every sound
+                                            # is actually resolving to
+bin/hyprbattles-ctl assets generated        # A/B against what ships
+bin/hyprbattles-ctl assets auto             # back to the default
+HYPRBATTLES_ASSETS=custom bin/hyprbattles-ctl assets   # one run only
 ```
 
 The mode is a file, `~/.local/state/hyprscroll2d/battles-assets`, the same
@@ -545,16 +545,16 @@ workspace and without a pad plugged in.
 From a script, or to drive one without a controller:
 
 ```bash
-bin/battles-ctl move left  # move the focused window and roll for a battle
-bin/battles-ctl            # the battle on screen, as JSON
-bin/battles-ctl cancel     # flee it, or close an already-over one (Escape)
-bin/battles-ctl stop       # tear it down now, without the closing line
-bin/battles-ctl debug      # force one
-bin/battles-ctl on|off|toggle
-bin/battles-ctl enabled    # true / false
-bin/battles-ctl assets [auto|generated|custom]
-bin/battles-ctl pick [n]   # play move n
-bin/battles-ctl advance    # step the text on
+bin/hyprbattles-ctl move left  # move the focused window and roll for a battle
+bin/hyprbattles-ctl            # the battle on screen, as JSON
+bin/hyprbattles-ctl cancel     # flee it, or close an already-over one (Escape)
+bin/hyprbattles-ctl stop       # tear it down now, without the closing line
+bin/hyprbattles-ctl debug      # force one
+bin/hyprbattles-ctl on|off|toggle
+bin/hyprbattles-ctl enabled    # true / false
+bin/hyprbattles-ctl assets [auto|generated|custom]
+bin/hyprbattles-ctl pick [n]   # play move n
+bin/hyprbattles-ctl advance    # step the text on
 ```
 
 `pick` and `advance` are debug aids for exactly one job: taking a screenshot

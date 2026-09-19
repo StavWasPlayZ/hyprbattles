@@ -1,71 +1,71 @@
 #!/usr/bin/env python3
 """Ask the window-battles daemon what it is doing, or tell it what to do.
 
-    battles-ctl                 # the battle on screen as JSON, or inactive
-    battles-ctl enabled         # "true" or "false", for a menu `checked:` line
-    battles-ctl on|off|toggle   # turn battles on or off, remembered across
-                                # restarts. Works with the daemon stopped: the
-                                # setting is a file, not a running process.
-    battles-ctl cancel          # flee it, or close an over one (what Escape does)
-    battles-ctl stop            # tear it down at once, without the closing line
-    battles-ctl debug           # force one between the focused window and its
-                                # neighbour, for working on the overlay
+    hyprbattles-ctl                 # the battle on screen as JSON, or inactive
+    hyprbattles-ctl enabled         # "true" or "false", for a menu `checked:` line
+    hyprbattles-ctl on|off|toggle   # turn battles on or off, remembered across
+                                    # restarts. Works with the daemon stopped: the
+                                    # setting is a file, not a running process.
+    hyprbattles-ctl cancel          # flee it, or close an over one (what Escape does)
+    hyprbattles-ctl stop            # tear it down at once, without the closing line
+    hyprbattles-ctl debug           # force one between the focused window and its
+                                    # neighbour, for working on the overlay
 
-    battles-ctl pantry          # what is on the shelves right now: a live,
-                                # read-only reading of the machine
+    hyprbattles-ctl pantry          # what is on the shelves right now: a live,
+                                    # read-only reading of the machine
 
-    battles-ctl moves <addr>    # what a window carries, and what it has yet
-                                # to learn
-    battles-ctl teach <addr> <slot> <TYPE:n>
-                                # swap the move in slot 0-3 for one it knows.
-                                # It has to keep two of its own type.
+    hyprbattles-ctl moves <addr>    # what a window carries, and what it has yet
+                                    # to learn
+    hyprbattles-ctl teach <addr> <slot> <TYPE:n>
+                                    # swap the move in slot 0-3 for one it knows.
+                                    # It has to keep two of its own type.
 
-    battles-ctl roster          # every creature with a window open: level,
-                                # stage, what it has won and how hungry it is.
-                                # One line per class, with a x2 when it has
-                                # more than one window open - they share a
-                                # record and an appetite
-    battles-ctl roster --json   # the same, as the bar panel reads it
-    battles-ctl sleeping        # the creatures whose windows are shut. They
-                                # keep their levels and their moves; they have
-                                # no appetite, because they have no window.
-    battles-ctl feed <addr> <shelf>
-                                # feed one creature one portion, through any
-                                # of its windows. The machine has to have the
-                                # food spare and the creature has to have the
-                                # appetite for it - its eldest window's age
-                                # buys that, and every window of the class
-                                # eats against it. Levels are earned this
-                                # way, and enough of them evolve the creature.
+    hyprbattles-ctl roster          # every creature with a window open: level,
+                                    # stage, what it has won and how hungry it is.
+                                    # One line per class, with a x2 when it has
+                                    # more than one window open - they share a
+                                    # record and an appetite
+    hyprbattles-ctl roster --json   # the same, as the bar panel reads it
+    hyprbattles-ctl sleeping        # the creatures whose windows are shut. They
+                                    # keep their levels and their moves; they have
+                                    # no appetite, because they have no window.
+    hyprbattles-ctl feed <addr> <shelf>
+                                    # feed one creature one portion, through any
+                                    # of its windows. The machine has to have the
+                                    # food spare and the creature has to have the
+                                    # appetite for it - its eldest window's age
+                                    # buys that, and every window of the class
+                                    # eats against it. Levels are earned this
+                                    # way, and enough of them evolve the creature.
 
-    battles-ctl assets          # which sound is coming from which file, and
-                                # why. The thing to run when your own file is
-                                # not playing.
-    battles-ctl assets auto|generated|custom
-                                # auto      your file when there is one, the
-                                #           generated one when there is not,
-                                #           decided per file. The default.
-                                # generated only what ships, even with your
-                                #           files sitting there: the A/B
-                                #           position, no files moved.
-                                # custom    only your files. A name you have
-                                #           not supplied is silent.
-                                # HYPRBATTLES_ASSETS=<mode> overrides the
-                                # saved setting for one process.
+    hyprbattles-ctl assets          # which sound is coming from which file, and
+                                    # why. The thing to run when your own file is
+                                    # not playing.
+    hyprbattles-ctl assets auto|generated|custom
+                                    # auto      your file when there is one, the
+                                    #           generated one when there is not,
+                                    #           decided per file. The default.
+                                    # generated only what ships, even with your
+                                    #           files sitting there: the A/B
+                                    #           position, no files moved.
+                                    # custom    only your files. A name you have
+                                    #           not supplied is silent.
+                                    # HYPRBATTLES_ASSETS=<mode> overrides the
+                                    # saved setting for one process.
 
-    battles-ctl move <dir>      # left|right|up|down: move the focused window
-                                # one cell and, if that landed on another
-                                # window, roll for a battle. This is what a
-                                # move key should be bound to; it moves the
-                                # window whether or not battles are on, and
-                                # whether or not the daemon is running.
+    hyprbattles-ctl move <dir>      # left|right|up|down: move the focused window
+                                    # one cell and, if that landed on another
+                                    # window, roll for a battle. This is what a
+                                    # move key should be bound to; it moves the
+                                    # window whether or not battles are on, and
+                                    # whether or not the daemon is running.
 
-    battles-ctl key <name>      # left|right|up|down|confirm|back|leave, the
-                                # overlay's keyboard mapped onto the controls
+    hyprbattles-ctl key <name>      # left|right|up|down|confirm|back|leave, the
+                                    # overlay's keyboard mapped onto the controls
 
-    battles-ctl pick [n]        # play move n of the battle on screen, and
-    battles-ctl advance         # step the text on: both debug aids, so the
-                                # overlay can be driven without a controller
+    hyprbattles-ctl pick [n]        # play move n of the battle on screen, and
+    hyprbattles-ctl advance         # step the text on: both debug aids, so the
+                                    # overlay can be driven without a controller
 
 Turning battles off stops any battle from starting at all; it is checked
 before the roll. A battle already on screen ends when it is switched off.
@@ -80,7 +80,7 @@ PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PLUGIN_ROOT, "lib"))
 # The exceptions to this script importing nothing, and all for the same
 # reason: a second copy of one of these answers would be a second answer.
-# Which file a sound comes from is the whole point of `battles-ctl assets`;
+# Which file a sound comes from is the whole point of `hyprbattles-ctl assets`;
 # how a window is moved has to be what the daemon would have done, or a move
 # made with the daemon down would land differently from one made with it up;
 # and the roster, the pantry and a meal have to read and cost the same here

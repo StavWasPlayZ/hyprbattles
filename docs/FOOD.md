@@ -108,7 +108,7 @@ fights you eat to become something. See [CREATURES.md](CREATURES.md).
 ## Checking the fridge
 
 ```bash
-bin/battles-ctl pantry
+bin/hyprbattles-ctl pantry
 ```
 
 ```
@@ -145,8 +145,8 @@ exists while a fight is on. It buys experience, and enough of that evolves the
 creature.
 
 ```bash
-bin/battles-ctl roster                  # every window, with how hungry it is
-bin/battles-ctl feed <address> staple   # one portion of FREE RAM
+bin/hyprbattles-ctl roster                  # every window, with how hungry it is
+bin/hyprbattles-ctl feed <address> staple   # one portion of FREE RAM
 ```
 
 ## Adding a shelf
