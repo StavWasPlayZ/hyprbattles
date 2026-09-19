@@ -48,6 +48,13 @@ therefore collide the same way, and the only thing that differs between them
 is which command moves a window one cell - which is all of
 `lib/window_moves.py`.
 
+Who was standing where is worked out from window *centres*, not from the gap
+between two facing edges. A scrolling layout draws the focused window wider
+than its cell, so it laps a couple of hundred pixels over the window beside
+it: measured edge to edge that neighbour is behind the focused window, and
+edge measurement therefore looked straight past the one window that was
+actually in the way. Centres do not care how wide either window was drawn.
+
 **Demon Slayer's Hyprscroll2D** - a private fork of the original Hyprscroll2D,
 never to be published, and that is its author's call - announces its own
 collisions, so on it the move keys it already binds trigger battles with
@@ -170,7 +177,7 @@ particular game, arranged in a ring. Each type hits the next one for double and
 bounces off the one before it for half:
 
 ```
-SHELL -> CODE -> NET -> CHAT -> MEDIA -> PIXEL -> GLASS -> SHELL
+SHELL -> CODE -> NET -> CHAT -> MEDIA -> GAME -> GLASS -> SHELL
 ```
 
 A ring is easy to hold in your head after two battles, and unlike a
@@ -178,9 +185,9 @@ hand-written chart it cannot accidentally produce a type that loses to
 everything - each type is weak to exactly one other and resists exactly one.
 
 `SHELL` is terminals, `CODE` is editors and IDEs, `NET` is browsers, `CHAT` is
-messaging and mail, `MEDIA` is players and creative tools, `PIXEL` is games and
-launchers, and `GLASS` is every window that is nothing more interesting than a
-window. Unrecognised classes are `GLASS`.
+messaging and mail, `MEDIA` is players and creative tools, `GAME` is games,
+launchers and engines, and `GLASS` is every window that is nothing more
+interesting than a window. Unrecognised classes are `GLASS`.
 
 ### Damage
 
@@ -211,9 +218,13 @@ controller as well when one is there.
 | Controller | Keyboard | What it does |
 | --- | --- | --- |
 | D-pad or left stick | Arrows, or `hjkl` | Move the cursor: up/down in `FIGHT`/`ITEM`/`RUN` and the pantry, around the 2x2 move grid |
-| `A` | `Enter` or `Space` | Take the highlighted option, or show the next line of text |
-| `B` | `Backspace` | Out of the move list or the pantry, or on with the text |
+| `A` | `Z`, `Enter` or `Space` | Take the highlighted option, or show the next line of text |
+| `B` | `X` or `Backspace` | Out of the move list or the pantry, or on with the text |
 | `Start` / `Select` | `Escape` | Leave, whatever is happening; again on the closing line, go now |
+
+`Z` and `X` sit next to each other under the hand that is not on the arrows,
+which is where every handheld emulator puts `A` and `B` - and they are the
+pair the on-screen hints name, because a hint has to be one key and not three.
 
 While the controller is borrowed, nothing on it reaches the desktop, so no
 stray press can close or throw a window mid-fight. Holding `Guide` still hands
@@ -223,6 +234,14 @@ when the borrower is wedged - and losing it that way ends the battle.
 The two are one set of controls rather than two that could drift apart: the
 keyboard maps onto the forwarded controller events and goes through the same
 handlers.
+
+The hints along the bottom name one of the two, never both. The daemon
+remembers which was last used to play and publishes it as `input` in the
+snapshot; the overlay labels the row from that. Both sets at once was six
+labels to read past to find the two that were yours. Either device can take
+over mid-fight - the pad is grabbed whoever started the battle, and the
+keyboard is never taken away - so the row re-labels itself on the first press
+from the other hand.
 
 ### Eating
 

@@ -69,7 +69,7 @@ class Types(unittest.TestCase):
         self.assertEqual(battles.type_of("jetbrains-webstorm"), "CODE")
         self.assertEqual(battles.type_of("Slack"), "CHAT")
         self.assertEqual(battles.type_of("mpv"), "MEDIA")
-        self.assertEqual(battles.type_of("steam"), "PIXEL")
+        self.assertEqual(battles.type_of("steam"), "GAME")
 
     def test_anything_unrecognised_is_glass(self):
         self.assertEqual(battles.type_of("org.gnome.Nautilus"), "GLASS")
@@ -926,6 +926,33 @@ class AnyLayout(unittest.TestCase):
         self.assertEqual(moves.neighbour("0xa", places, "down"), "")
         self.assertEqual(moves.neighbour("0xb", places, "up"), "")
 
+    def test_a_window_the_focused_one_overlaps_is_still_the_neighbour(self):
+        # Demon Slayer's Hyprscroll2D draws the focused window larger than the
+        # cell it sits in, so it laps over the window beside it: the facing
+        # edges have crossed while the centres have not. Measured off a real
+        # desktop - the 1896-wide window is the focused one, and the window in
+        # the way starts 162px inside it.
+        places = moves.placement([
+            tiled("0xa", (1932, 42), size=(1896, 1026)),
+            tiled("0xb", (3666, 165), size=(1519, 780)),
+            tiled("0xc", (5211, 165), size=(1519, 780)),
+        ])
+        self.assertEqual(moves.neighbour("0xa", places, "right"), "0xb")
+
+    def test_a_swap_under_an_overlapping_window_is_a_collision(self):
+        # The same desktop, either side of `layoutmsg move right`: the focused
+        # window stayed on its pixel and the one it displaced went past it to
+        # the left, still overlapped.
+        before = moves.placement([
+            tiled("0xa", (1932, 42), size=(1896, 1026)),
+            tiled("0xb", (3666, 165), size=(1519, 780)),
+        ])
+        after = moves.placement([
+            tiled("0xa", (1932, 42), size=(1896, 1026)),
+            tiled("0xb", (575, 165), size=(1519, 780)),
+        ])
+        self.assertEqual(moves.swapped("0xa", "right", before, after), "0xb")
+
     def test_a_swap_is_the_pair_changing_sides(self):
         before = moves.placement([tiled("0xa", (0, 0)), tiled("0xb", (800, 0))])
         after = moves.placement([tiled("0xa", (800, 0)), tiled("0xb", (0, 0))])
@@ -1045,6 +1072,7 @@ class EncounterRumble(unittest.TestCase):
         daemon.pad = pad
         daemon.battle = None
         daemon.source = None
+        daemon.input = "keys"
         daemon.published = None
         daemon.publish = lambda: None
         daemon.pantry = None
@@ -1089,6 +1117,7 @@ class BattleInput(unittest.TestCase):
         daemon.pad = FakePad()
         daemon.published = None
         daemon.publish = lambda: None
+        daemon.input = "keys"
         daemon.battle = battles.Battle(
             battles.creature(window("0x10", "foot")),
             battles.creature(window("0x20", "firefox")),
@@ -1184,6 +1213,33 @@ class BattleInput(unittest.TestCase):
                              "reason": "lease expired"}, now)
         self.assertEqual(daemon.battle.phase, "over")
         self.assertEqual(daemon.battle.result, "draw")
+
+    def test_the_controls_are_named_for_whatever_is_in_hand(self):
+        # The overlay draws one set of hints, not both, so the daemon has to
+        # say which. A battle can change hands mid-fight either way: the pad
+        # is grabbed whoever started the fight, and the keyboard is never
+        # taken away.
+        daemon = self.daemon()
+        now = self.at_the_action_menu(daemon)
+        daemon.on_key("down", now)
+        self.assertEqual(daemon.input, "keys")
+        daemon.on_pad_event({"event": "direction", "direction": "u"}, now)
+        self.assertEqual(daemon.input, "pad")
+        daemon.on_key("up", now)
+        self.assertEqual(daemon.input, "keys")
+
+    def test_the_overlay_is_told_which_one(self):
+        daemon = self.daemon()
+        daemon.enabled = lambda: True
+        daemon.input = "pad"
+        self.assertEqual(daemon.state()["input"], "pad")
+
+    def test_a_grab_being_revoked_is_not_somebody_playing(self):
+        # It is the pad going away, so it must not relabel the hints as the
+        # pad's on the way out.
+        daemon = self.daemon()
+        daemon.on_pad_event({"event": "grab", "state": "revoked"}, 0.0)
+        self.assertEqual(daemon.input, "keys")
 
     def test_a_revoke_with_no_battle_running_is_harmless(self):
         daemon = self.daemon()

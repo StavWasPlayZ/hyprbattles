@@ -74,6 +74,7 @@ Rectangle {
             spacing: root.unit * 3
 
             PixelText {
+                id: hpLabel
                 text: "HP"
                 pixel: root.unit
                 color: Util.alpha(Color.foreground, 0.75)
@@ -83,7 +84,9 @@ Rectangle {
             Rectangle {
                 id: track
 
-                width: parent.width - root.unit * 9
+                // Measured, not guessed: a hardcoded label width overshot the
+                // column and left the bar hanging past LV/the HP numbers.
+                width: parent.width - hpLabel.width - parent.spacing
                 height: root.unit * 4
                 anchors.verticalCenter: parent.verticalCenter
                 color: Util.alpha(Color.foreground, 0.16)

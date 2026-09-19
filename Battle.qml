@@ -44,6 +44,10 @@ Item {
     readonly property string monitor: String(state.monitor || "")
     readonly property string effect: String(state.effect || "")
     readonly property string message: String(state.message || "")
+    // The daemon says which of the two was last used to play. The controls
+    // are named for that one: showing both sets at once asks the player to
+    // read past four labels that are not theirs to find the two that are.
+    readonly property bool padInput: String(state.input || "keys") === "pad"
     readonly property bool menuOpen: state.menu === true
     readonly property bool actionOpen: state.action === true
     readonly property bool itemOpen: state.item === true
@@ -63,7 +67,7 @@ Item {
     // dark label text and to sit on a light or a dark background.
     readonly property var typeColors: ({
         "SHELL": "#5fb37a", "CODE": "#5f97d8", "NET": "#9a86e0",
-        "CHAT": "#d8a04a", "MEDIA": "#d86e9a", "PIXEL": "#dc6a6a",
+        "CHAT": "#d8a04a", "MEDIA": "#d86e9a", "GAME": "#dc6a6a",
         "GLASS": "#6fb8bb"
     })
 
@@ -123,6 +127,10 @@ Item {
         case "l": return "right"
         case "k": return "up"
         case "j": return "down"
+        // Where every handheld emulator puts A and B, and the pair this
+        // names in the hints - one hand on the arrows, one on these.
+        case "z": return "confirm"
+        case "x": return "back"
         }
         return ""
     }
@@ -757,15 +765,19 @@ Item {
                     opacity: 0.5
 
                     Repeater {
-                        model: [
-                            { key: "D-PAD", label: "PICK" },
-                            { key: "ARROWS", label: "PICK" },
-                            { key: "A", label: "OK" },
-                            { key: "ENTER", label: "OK" },
-                            { key: "B", label: root.menuOpen ? "BACK" : "NEXT" },
-                            { key: "START", label: "LEAVE" },
-                            { key: "ESC", label: "LEAVE" }
-                        ]
+                        model: root.padInput
+                            ? [
+                                { key: "D-PAD", label: "PICK" },
+                                { key: "A", label: "OK" },
+                                { key: "B", label: root.menuOpen ? "BACK" : "NEXT" },
+                                { key: "START", label: "LEAVE" }
+                            ]
+                            : [
+                                { key: "ARROWS", label: "PICK" },
+                                { key: "Z", label: "OK" },
+                                { key: "X", label: root.menuOpen ? "BACK" : "NEXT" },
+                                { key: "ESC", label: "LEAVE" }
+                            ]
 
                         Row {
                             id: hint

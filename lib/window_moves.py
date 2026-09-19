@@ -107,6 +107,12 @@ def _overlaps(start, length, other_start, other_length):
             - max(start, other_start)) > 0
 
 
+def _middle(start, length):
+    """The centre of a span. Which side of us a window is on is decided on
+    centres, never on the gap between two edges - see neighbour()."""
+    return start + length / 2.0
+
+
 def neighbour(address, places, direction):
     """The nearest window in that direction, within one reading.
 
@@ -117,6 +123,14 @@ def neighbour(address, places, direction):
     two readings would call that no move at all, or call an unrelated pan a
     swap. Who is next to whom survives a pan, because a pan moves everybody by
     the same amount.
+
+    Which side of us a window is on is settled on centres rather than on the
+    gap between the two facing edges, because windows overlap. A scrolling
+    layout grows the focused window over the top of its neighbours, so the
+    very window in the way starts a couple of hundred pixels *behind* the
+    focused window's edge - an edge gap reads that as "behind us", skips it,
+    and answers with the window past it or with nothing at all. Centres do
+    not care how wide either window was drawn.
     """
     me = places.get(address)
     if not me or direction not in DIRECTIONS:
@@ -129,15 +143,17 @@ def neighbour(address, places, direction):
         if direction in ("left", "right"):
             if not _overlaps(y, height, oy, oheight):
                 continue        # not in this row
-            gap = x - (ox + owidth) if direction == "left" else ox - (x + width)
+            away = _middle(ox, owidth) - _middle(x, width)
         else:
             if not _overlaps(x, width, ox, owidth):
                 continue        # not in this column
-            gap = y - (oy + oheight) if direction == "up" else oy - (y + height)
-        if gap < -1:
-            continue            # behind us, not in front
-        if shortest is None or gap < shortest:
-            closest, shortest = other, gap
+            away = _middle(oy, oheight) - _middle(y, height)
+        if direction in ("left", "up"):
+            away = -away
+        if away <= 0:
+            continue            # behind us, or centred on us
+        if shortest is None or away < shortest:
+            closest, shortest = other, away
     return closest
 
 

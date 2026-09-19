@@ -27,7 +27,7 @@ import random
 # head after two battles, and it cannot produce an unwinnable matchup the way
 # a hand-written chart can.
 
-TYPES = ("SHELL", "CODE", "NET", "CHAT", "MEDIA", "PIXEL", "GLASS")
+TYPES = ("SHELL", "CODE", "NET", "CHAT", "MEDIA", "GAME", "GLASS")
 
 SUPER_EFFECTIVE = 2.0
 NOT_VERY_EFFECTIVE = 0.5
@@ -55,9 +55,9 @@ CLASS_TYPES = (
                "audacity", "kdenlive", "krita", "darktable", "ardour",
                "rhythmbox", "clementine", "celluloid", "video", "music",
                "player", "image")),
-    ("PIXEL", ("steam", "lutris", "heroic", "gamescope", "retroarch",
-               "minecraft", "wine", "proton", "dolphin-emu", "pcsx",
-               "ppsspp", "yuzu", "godot", "unity", "love")),
+    ("GAME", ("steam", "lutris", "heroic", "gamescope", "retroarch",
+              "minecraft", "wine", "proton", "dolphin-emu", "pcsx",
+              "ppsspp", "yuzu", "godot", "unity", "love")),
 )
 
 
@@ -118,7 +118,7 @@ MOVES = {
         {"name": "BASS DROP", "power": 70, "accuracy": 0.90},
         {"name": "RENDER PASS", "power": 85, "accuracy": 0.70},
     ),
-    "PIXEL": (
+    "GAME": (
         {"name": "FRAME DROP", "power": 50, "accuracy": 1.00},
         {"name": "RESPAWN", "power": 65, "accuracy": 0.95},
         {"name": "HEADSHOT", "power": 90, "accuracy": 0.65},

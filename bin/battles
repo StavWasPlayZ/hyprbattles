@@ -313,6 +313,11 @@ class Daemon:
 
         self.battle = None
         self.source = "layout"
+        # Which of the two ways in was last used, so the overlay can label the
+        # controls with the buttons that are actually under the player's
+        # hands rather than with both sets at once. Either may take over
+        # mid-fight - the pad is always grabbed, whoever started the battle.
+        self.input = "keys"
         # Which family of move command put the two windows where they are, so
         # a lost battle is undone by the same one running backwards. See
         # lib/window_moves.py; a collision announced by a layout plugin is by
@@ -470,6 +475,10 @@ class Daemon:
 
         self.battle = fight
         self.source = source
+        # A d-pad collision was made with a pad in hand; everything else -
+        # a key bound to `battles-ctl move`, the layout plugin, debug - was
+        # not, until a button says otherwise.
+        self.input = "pad" if source == "pad" else "keys"
         # Always ask for the controller, even for a battle a keyboard started:
         # the pad may well be sitting there, and a battle you can finish with
         # either hand is better than one tied to whichever you began with. A
@@ -561,8 +570,9 @@ class Daemon:
 
     # -------------------------------------------------------------- input
 
-    def on_pad_event(self, event, now):
-        """One forwarded datagram from the gamepad daemon."""
+    def on_pad_event(self, event, now, device="pad"):
+        """One forwarded datagram from the gamepad daemon, or the same shape
+        of event built out of a keypress by on_key()."""
         kind = event.get("event")
         if kind == "grab" and event.get("state") == "revoked":
             # The pad was taken back - the daemon is stopping, the window
@@ -576,6 +586,12 @@ class Daemon:
             return
         if not self.battle:
             return
+        if kind in ("direction", "button") and self.input != device:
+            # Picking up the pad mid-fight re-labels the hints, and so does
+            # putting it down again. Published on its own because a press
+            # that changes nothing else still changed this.
+            self.input = device
+            self.publish()
         if kind == "direction":
             if self.battle.move_cursor(event.get("direction")):
                 self.effects.play("battle-select.wav")
@@ -657,6 +673,9 @@ class Daemon:
             return {"active": False, "enabled": self.enabled()}
         snapshot = self.battle.snapshot()
         snapshot["enabled"] = True
+        # Wiring, not a rule: which device is in the player's hands is not
+        # something lib/battle_rules.py has any business knowing.
+        snapshot["input"] = self.input
         return snapshot
 
     def publish(self):
@@ -772,10 +791,11 @@ class Daemon:
             return
         kind, value = mapped
         if kind == "direction":
-            self.on_pad_event({"event": "direction", "direction": value}, now)
+            self.on_pad_event({"event": "direction", "direction": value}, now,
+                              "keys")
         else:
             self.on_pad_event({"event": "button", "name": value,
-                               "pressed": True}, now)
+                               "pressed": True}, now, "keys")
 
     def debug(self, now):
         """Force a battle between the focused window and its neighbour.
