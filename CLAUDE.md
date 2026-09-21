@@ -32,7 +32,7 @@ bin/hyprbattles-ctl assets          # asset mode + what every sound resolves to
 Forcing/inspecting through the shell instead of the socket:
 `omarchy-shell -q hyprscroll2d-battle debugBattle | cancel`, `omarchy-shell hyprscroll2d-battle shown`.
 The bar panel's own views: `omarchy-shell -q hyprbattles-roster open | pantry |
-food <addr>`.
+best | food <addr>`.
 
 ## Two traps
 

@@ -150,7 +150,35 @@ Panel {
     // the same rows - a badge sized against a list nobody is reading lines
     // the cards up with the wrong column.
     readonly property var listRows: view === "roster" ? rows
-        : (view === "sleeping" ? sleepingRows : [])
+        : (view === "sleeping" ? sleepingRows
+           : (view === "best" ? bestRows : []))
+    // What the best windows are ranked by: "xp" or "wins".
+    property string ranking: "xp"
+    // Every creature, awake or asleep, strongest first. Stage and level are
+    // both read off experience, so ranking by stage first would change
+    // nothing - experience alone is the ladder.
+    readonly property var bestRows: {
+        var all = rows.concat(sleepingRows)
+        var byWins = ranking === "wins"
+        all.sort(function (a, b) {
+            var xp = Number(b.xp || 0) - Number(a.xp || 0)
+            var rate = winRate(b) - winRate(a)
+            var first = byWins ? rate : xp
+            if (first !== 0) return first
+            var second = byWins ? xp : rate
+            if (second !== 0) return second
+            return String(a.name || "").localeCompare(String(b.name || ""))
+        })
+        return all
+    }
+    // The record as a rate, pulled towards even until there are fights to
+    // go on: one win from one fight is not a better record than forty from
+    // fifty, and a plain ratio would rank it first.
+    function winRate(row) {
+        var wins = Number(row.wins || 0)
+        var losses = Number(row.losses || 0)
+        return (wins + 1) / (wins + losses + 2)
+    }
     // One width for every type badge on screen: the widest of the type names
     // actually listed, measured rather than guessed. See `badgeSizer`.
     readonly property real badgeTextWidth: badgeSizer.textWidth
@@ -164,6 +192,9 @@ Panel {
     // "pantry" - the same shelves with nothing to spend them on, which is the
     // read-only answer to "what is going spare".
     property string view: "roster"
+    // The list a window's page was opened from, which is where its way back
+    // goes: "roster", "sleeping" or "best".
+    property string origin: "roster"
     property string feeding: ""
     property string looking: ""
     // Which of the four carried moves a swap is aimed at, and the move the
@@ -481,6 +512,7 @@ Panel {
 
     function showRoster() {
         root.view = "roster"
+        root.origin = "roster"
         root.feeding = ""
         root.looking = ""
         root.described = ""
@@ -527,6 +559,8 @@ Panel {
     function back() {
         if (root.view === "moves" && root.subject !== "")
             root.showWindow(root.subject)
+        else if (root.view === "window" && root.origin === "best")
+            root.showBest()
         else if (root.view === "window" && root.asleep)
             root.showSleeping()
         else
@@ -539,6 +573,16 @@ Panel {
         root.feeding = ""
         root.looking = ""
         root.view = "sleeping"
+        root.origin = "sleeping"
+    }
+
+    function showBest() {
+        root.note = ""
+        root.described = ""
+        root.feeding = ""
+        root.looking = ""
+        root.view = "best"
+        root.origin = "best"
     }
 
     function shelfFor(key) {
@@ -577,6 +621,12 @@ Panel {
         if (view === "sleeping")
             return "Nothing happens while a window is shut. Open it and it "
                  + "picks up where it left off."
+        if (view === "best")
+            return ranking === "wins"
+                ? "Win rate counts a short record as closer to even, so one "
+                  + "lucky fight does not top the list."
+                : "Experience decides the level and the stage, so the most of "
+                  + "it is the furthest evolved."
         if (view === "window") {
             if (asleep)
                 return "Shut. It keeps its level and its moves; it cannot eat "
@@ -656,6 +706,7 @@ Panel {
             return "ok"
         }
         function asleep(): string { root.open(); root.showSleeping(); return "ok" }
+        function best(): string { root.open(); root.showBest(); return "ok" }
         function details(address: string): string {
             root.open()
             root.showWindow(address)
@@ -666,6 +717,55 @@ Panel {
             root.open()
             root.showFood(address)
             return "ok"
+        }
+    }
+
+    // A button that is a step into another screen, or one half of a choice.
+    component Door: Rectangle {
+        id: door
+
+        property string label: ""
+        property bool chevron: true
+        property bool lit: false
+        signal clicked()
+
+        height: doorLabel.implicitHeight + Style.spacing.md * 2
+        radius: Style.cornerRadius
+        color: (doorMouse.containsMouse || door.lit)
+            ? Style.selectedFillFor(root.foreground, Color.accent)
+            : "transparent"
+        border.width: Math.max(1, Style.space(1))
+        border.color: Style.normalBorderColor
+
+        MouseArea {
+            id: doorMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: door.clicked()
+        }
+
+        Text {
+            id: doorLabel
+            anchors.left: door.chevron ? parent.left : undefined
+            anchors.leftMargin: Style.spacing.md
+            anchors.horizontalCenter: door.chevron ? undefined : parent.horizontalCenter
+            anchors.verticalCenter: parent.verticalCenter
+            text: door.label
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+        }
+
+        Text {
+            visible: door.chevron
+            anchors.right: parent.right
+            anchors.rightMargin: Style.spacing.md
+            anchors.verticalCenter: parent.verticalCenter
+            text: ""
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
         }
     }
 
@@ -875,6 +975,13 @@ Panel {
                              ? "   " + Number(creature.row.xpInto || 0)
                                + "/" + Number(creature.row.xpNeeded) + " XP"
                              : "   MAX")
+                          // The ranked list shows what it is ranked by: the
+                          // record sits next to the experience it breaks
+                          // ties with, and the other way round.
+                          + (root.view === "best" && creature.interactive
+                             ? "   " + Number(creature.row.wins || 0) + "W "
+                               + Number(creature.row.losses || 0) + "L"
+                             : "")
                     color: root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
@@ -1147,9 +1254,11 @@ Panel {
                         anchors.centerIn: parent
                         text: root.view === "moves" && !!root.chosen
                             ? "  Back to " + String(root.chosen.name)
-                            : (root.view === "window" && root.asleep
-                               ? "  Back to the sleeping"
-                               : "  Back to the windows")
+                            : (root.view === "window" && root.origin === "best"
+                               ? "  Back to the best"
+                               : (root.view === "window" && root.asleep
+                                  ? "  Back to the sleeping"
+                                  : "  Back to the windows"))
                         color: root.foreground
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.body
@@ -1158,8 +1267,35 @@ Panel {
 
                 PanelSeparator {
                     visible: root.view !== "pantry" && root.view !== "sleeping"
+                             && root.view !== "best"
                              && !!root.chosen
                     width: parent.width
+                }
+
+                // What the best windows are ranked by, as two halves of
+                // one switch: the lit half is the order you are reading.
+                // Pinned with the way out, so the order can be changed from
+                // anywhere down the list.
+                Row {
+                    visible: root.view === "best"
+                    width: parent.width
+                    spacing: Style.spacing.md
+
+                    Door {
+                        width: (parent.width - Style.spacing.md) / 2
+                        label: "By experience"
+                        chevron: false
+                        lit: root.ranking === "xp"
+                        onClicked: root.ranking = "xp"
+                    }
+
+                    Door {
+                        width: (parent.width - Style.spacing.md) / 2
+                        label: "By win rate"
+                        chevron: false
+                        lit: root.ranking === "wins"
+                        onClicked: root.ranking = "wins"
+                    }
                 }
 
                 // What you are feeding, above its food: the picker is a list
@@ -1168,6 +1304,7 @@ Panel {
                 // minus the button - you are already feeding it.
                 WindowCard {
                     visible: root.view !== "pantry" && root.view !== "sleeping"
+                             && root.view !== "best"
                              && !!root.chosen
                     width: parent.width
                     row: root.chosen || ({})
@@ -1237,100 +1374,35 @@ Panel {
                         onClicked: root.flip()
                     }
 
-                    // The two ways out of the list, at the top where they
-                    // can be seen and side by side because they are the same
-                    // kind of thing: a step sideways into another screen,
-                    // each with a chevron to say so. Sleeping on the left,
-                    // because it is about the windows this screen is about;
-                    // food on the right, because it is about the machine.
+                    // The ways out of the list, at the top where they can be
+                    // seen, each with a chevron to say it is a step sideways
+                    // into another screen. The two about windows share a row,
+                    // because they are the same kind of thing: the ones that
+                    // are shut, and all of them ranked. Food gets a row of its
+                    // own under them, because it is about the machine.
                     Row {
                         visible: root.view === "roster"
                         width: parent.width
                         spacing: Style.spacing.md
 
-                        Rectangle {
-                            id: sleepDoor
-
+                        Door {
                             width: (parent.width - Style.spacing.md) / 2
-                            height: sleepLabel.implicitHeight + Style.spacing.md * 2
-                            radius: Style.cornerRadius
-                            color: sleepMouse.containsMouse
-                                ? Style.selectedFillFor(root.foreground, Color.accent)
-                                : "transparent"
-                            border.width: Math.max(1, Style.space(1))
-                            border.color: Style.normalBorderColor
-
-                            MouseArea {
-                                id: sleepMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.showSleeping()
-                            }
-
-                            Text {
-                                id: sleepLabel
-                                anchors.left: parent.left
-                                anchors.leftMargin: Style.spacing.md
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "󰖔  Sleeping"
-                                color: root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.body
-                            }
-
-                            Text {
-                                anchors.right: parent.right
-                                anchors.rightMargin: Style.spacing.md
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: ""
-                                color: root.dim
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                            }
+                            label: "󰖔  Sleeping"
+                            onClicked: root.showSleeping()
                         }
 
-                        Rectangle {
-                            id: foodDoor
-
+                        Door {
                             width: (parent.width - Style.spacing.md) / 2
-                            height: foodLabel.implicitHeight + Style.spacing.md * 2
-                            radius: Style.cornerRadius
-                            color: foodMouse.containsMouse
-                                ? Style.selectedFillFor(root.foreground, Color.accent)
-                                : "transparent"
-                            border.width: Math.max(1, Style.space(1))
-                            border.color: Style.normalBorderColor
-
-                            MouseArea {
-                                id: foodMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.showPantry()
-                            }
-
-                            Text {
-                                id: foodLabel
-                                anchors.left: parent.left
-                                anchors.leftMargin: Style.spacing.md
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: "󱁂  All food"
-                                color: root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.body
-                            }
-
-                            Text {
-                                anchors.right: parent.right
-                                anchors.rightMargin: Style.spacing.md
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: ""
-                                color: root.dim
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                            }
+                            label: "󰔸  Best windows"
+                            onClicked: root.showBest()
                         }
+                    }
+
+                    Door {
+                        visible: root.view === "roster"
+                        width: parent.width
+                        label: "󱁂  All food"
+                        onClicked: root.showPantry()
                     }
 
                     PanelSeparator { width: parent.width }
@@ -1339,10 +1411,12 @@ Panel {
                         width: parent.width
                         text: root.view === "roster" ? "WINDOWS"
                             : (root.view === "sleeping" ? "SLEEPING WINDOWS"
+                               : root.view === "best" ? "BEST WINDOWS"
                                : root.view === "pantry" ? "ALL FOOD"
                                : (root.view === "moves"
                                   ? "SLOT " + (root.slot + 1)
-                                  : root.view === "window" ? "THE RECORD"
+                                  : root.view === "window"
+                                    ? (root.knownMoves.length > 0 ? "MOVES" : "THE RECORD")
                                   : "FEED " + (root.chosen ? String(root.chosen.name) : "")))
                         foreground: root.foreground
                         fontFamily: root.fontFamily
@@ -1364,6 +1438,15 @@ Panel {
                     }
 
                     Text {
+                        visible: root.view === "best" && root.bestRows.length === 0
+                        width: parent.width
+                        text: root.loading ? "Counting windows..." : "No windows yet."
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                    }
+
+                    Text {
                         visible: root.view === "roster" && root.rows.length === 0
                         width: parent.width
                         text: root.loading ? "Counting windows..." : "No windows open."
@@ -1379,73 +1462,6 @@ Panel {
                             row: modelData
                             width: column.width
                         }
-                    }
-
-                    // ------------------------------------ one window, in full
-                    //
-                    // The card at the top says what it is; this says what it
-                    // is made of. Two columns, because every line is a short
-                    // label and a shorter number.
-
-                    Grid {
-                        visible: root.view === "window" && !!root.chosen
-                        columns: 2
-                        columnSpacing: Style.spacing.md
-                        rowSpacing: Style.spacing.md
-                        width: parent.width
-
-                        Repeater {
-                            model: root.view === "window" ? root.stats : []
-
-                            Rectangle {
-                                id: stat
-
-                                required property var modelData
-
-                                width: (column.width - Style.spacing.md) / 2
-                                height: statBody.implicitHeight + Style.spacing.md * 2
-                                radius: Style.cornerRadius
-                                color: "transparent"
-                                border.width: Math.max(1, Style.space(1))
-                                border.color: Style.normalBorderColor
-
-                                Column {
-                                    id: statBody
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    anchors.top: parent.top
-                                    anchors.margins: Style.spacing.md
-                                    spacing: Style.spacing.xxs
-
-                                    Text {
-                                        width: parent.width
-                                        elide: Text.ElideRight
-                                        text: String(stat.modelData.name)
-                                        color: root.dim
-                                        font.family: root.fontFamily
-                                        font.pixelSize: Style.font.caption
-                                    }
-
-                                    Text {
-                                        width: parent.width
-                                        elide: Text.ElideRight
-                                        text: String(stat.modelData.value)
-                                        color: stat.modelData.tone
-                                            ? stat.modelData.tone : root.foreground
-                                        font.family: root.fontFamily
-                                        font.pixelSize: Style.font.body
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    PanelSectionHeader {
-                        visible: root.view === "window" && root.knownMoves.length > 0
-                        width: parent.width
-                        text: "MOVES"
-                        foreground: root.foreground
-                        fontFamily: root.fontFamily
                     }
 
                     // What it fights with, and the colour each move belongs
@@ -1511,6 +1527,73 @@ Panel {
                                         color: root.dim
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.caption
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    PanelSectionHeader {
+                        visible: root.view === "window" && root.knownMoves.length > 0
+                        width: parent.width
+                        text: "THE RECORD"
+                        foreground: root.foreground
+                        fontFamily: root.fontFamily
+                    }
+
+                    // ------------------------------------ one window, in full
+                    //
+                    // The card at the top says what it is; this says what it
+                    // is made of. Two columns, because every line is a short
+                    // label and a shorter number.
+
+                    Grid {
+                        visible: root.view === "window" && !!root.chosen
+                        columns: 2
+                        columnSpacing: Style.spacing.md
+                        rowSpacing: Style.spacing.md
+                        width: parent.width
+
+                        Repeater {
+                            model: root.view === "window" ? root.stats : []
+
+                            Rectangle {
+                                id: stat
+
+                                required property var modelData
+
+                                width: (column.width - Style.spacing.md) / 2
+                                height: statBody.implicitHeight + Style.spacing.md * 2
+                                radius: Style.cornerRadius
+                                color: "transparent"
+                                border.width: Math.max(1, Style.space(1))
+                                border.color: Style.normalBorderColor
+
+                                Column {
+                                    id: statBody
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: Style.spacing.md
+                                    spacing: Style.spacing.xxs
+
+                                    Text {
+                                        width: parent.width
+                                        elide: Text.ElideRight
+                                        text: String(stat.modelData.name)
+                                        color: root.dim
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.caption
+                                    }
+
+                                    Text {
+                                        width: parent.width
+                                        elide: Text.ElideRight
+                                        text: String(stat.modelData.value)
+                                        color: stat.modelData.tone
+                                            ? stat.modelData.tone : root.foreground
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.body
                                     }
                                 }
                             }

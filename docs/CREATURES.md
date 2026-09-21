@@ -271,7 +271,7 @@ is **one meal on the shelves right now** away from evolving. Switch battles
 off and the dot goes with them; a game that is not running has nothing to ask
 for.
 
-Behind the icon are three views, because each is a panel's worth on its own:
+Behind the icon are several views, because each is a panel's worth on its own:
 
 **The windows.** The switch first - it is what somebody opening the panel in a
 hurry came for - then a card per creature, hungriest first. Each card carries
@@ -328,7 +328,21 @@ closed what you chose would make the second portion as much work as the
 first. What happened is the tip until the next click, above the open shelf's
 own description, because there is nowhere else for it to be read.
 
-**All food**, reached from the button at the top, for when the question is
+The buttons at the top sit in two rows. **Sleeping** and **Best windows**
+share the first, because both are lists of windows. **All food** has the row
+under them to itself, because it is about the machine.
+
+**Best windows** lists every creature, open or asleep, strongest first, with
+its record next to its experience. A switch at the top picks the order.
+**By experience** sorts on experience alone. Level and stage are both read
+off experience, so sorting on stage first would change nothing; ties go to
+the better win rate. **By win rate** sorts on `(wins + 1) / (wins + losses +
+2)` rather than the plain ratio. A creature with one win from one fight
+would otherwise outrank one with forty wins from fifty; this way a short
+record counts as nearer to even. Ties go to experience. A window's page opened
+from this list goes back to this list.
+
+**All food**, reached from its button at the top, for when the question is
 "what has this machine got spare" rather than "what do I feed this". The same
 shelves, with nothing to spend them on, and clicking one still reads it out.
 
