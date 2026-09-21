@@ -51,7 +51,11 @@ CLASS_TYPES = (
     ("AGENT", ("claude", "codex", "chatgpt", "copilot", "gemini",
                "perplexity", "librechat", "openwebui", "lmstudio",
                "lm-studio", "ollama", "msty", "openai", "anthropic")),
-    ("SHELL", ("foot", "alacritty", "kitty", "ghostty", "wezterm", "urxvt",
+    # Omarchy's agent launcher is a terminal under its own app id
+    # (`foot --app-id=org.omarchy.agent -e claude`), so it is a terminal here
+    # and the agent inside it is found the way it is in any other. The whole
+    # id, never "agent": a polkit authentication agent is not a terminal.
+    ("SHELL", ("org.omarchy.agent", "foot", "alacritty", "kitty", "ghostty", "wezterm", "urxvt",
                "xterm", "terminal", "konsole", "tilix", "term")),
     ("CODE", ("code", "vscodium", "jetbrains", "idea", "pycharm", "webstorm",
               "clion", "rider", "goland", "rubymine", "android-studio",

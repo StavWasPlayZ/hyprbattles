@@ -143,9 +143,9 @@ Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
   question about a creature comes through a record first. A terminal is an
   `AGENT` named `claude` while one runs and a `SHELL` named `foot` again
   afterwards, each with its own record. Only a `SHELL` is ever asked (a
-  browser on claude.ai is a browser, and `org.omarchy.agent` is a polkit
-  agent), and every tool name must itself read back as `AGENT` through
-  `type_of`, or a sleeping agent - which has nothing left but its key - would
+  browser on claude.ai is a browser; `org.omarchy.agent` is Omarchy's agent
+  launcher, a foot under its own app id, so it counts as a `SHELL`), and
+  every tool name must itself read back as `AGENT` through `type_of`, or a sleeping agent - which has nothing left but its key - would
   change type when its window shut. Tests pin both.
 - **A creature always carries four moves, at least two of its own type, and
   all of them ones it has learned** (`Learning`). A record that says otherwise

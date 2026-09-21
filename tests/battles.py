@@ -2427,6 +2427,18 @@ class TheAgentInTheTerminal(unittest.TestCase):
         self.assertEqual(creatures.species_key(session, self.proc), "foot")
         self.assertEqual(battles.creature(session)["type"], "SHELL")
 
+    def test_omarchys_agent_window_is_a_terminal_running_an_agent(self):
+        # Omarchy launches its agent as `foot --app-id=org.omarchy.agent -e
+        # claude`: a terminal under a class that names no terminal, so it was
+        # typed GLASS and never asked what it was running.
+        fake_child(self.proc, 4244, "claude", parent=self.shell)
+        session = window("0x3", "org.omarchy.agent", pid=self.TERMINAL)
+        self.assertEqual(creatures.species_key(session, self.proc), "claude")
+        self.assertEqual(battles.creature(session)["type"], "AGENT")
+        # The whole id, not the word: an authentication agent is no terminal.
+        self.assertEqual(battles.type_of("polkit-gnome-authentication-agent-1"),
+                         "GLASS")
+
     def test_a_window_with_nothing_to_read_asks_nothing(self):
         # No pid is a sleeping creature or a fixture, and a browser is a
         # browser however many agents it has open in tabs.

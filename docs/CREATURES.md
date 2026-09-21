@@ -38,6 +38,8 @@ the rest, found by walking the process tree under the window (see
 under, and what that window *is* while the agent is in it is not a terminal.
 So every `claude` session is one creature wherever it runs, the terminal goes
 back to being `foot` when the agent exits, and both keep their own record.
+Omarchy's own agent window counts as a terminal too: it is foot under the
+app id `org.omarchy.agent`, so the tree under it is walked like any other.
 Agent desktop apps have a class like everything else and need none of this.
 
 The tree is walked once per window per record lookup and the answer is
