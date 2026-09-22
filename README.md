@@ -43,26 +43,6 @@ anything: no window is ever closed, killed, floated, resized or sent
 elsewhere. The worst outcome of a battle is a window ending up one cell from
 where you wanted it, which is also the worst outcome of not having a battle.
 
-## What it adds
-
-| Piece | What it is |
-| --- | --- |
-| [`bin/battles`](bin/battles) | The daemon: moves the window, spots the collision, rolls the odds, borrows the controller, runs the fight. |
-| [`bin/hyprbattles-ctl`](bin/hyprbattles-ctl) | Move a window, read the state, switch battles on or off, or force one, from anywhere. |
-| [`hyprbattles.lua`](hyprbattles.lua) | Binds the move to your keys in a Lua-configured Hyprland. |
-| [`lib/window_moves.py`](lib/window_moves.py) | Which command moves a window one cell, per layout, and how to tell a swap from a step into an empty cell. |
-| [`lib/battle_rules.py`](lib/battle_rules.py) | The rules: creatures, types, damage, the turn loop. No I/O in it at all. |
-| [`lib/pantry.py`](lib/pantry.py) | The food: read-only readings of free memory, cache, swap, entropy, idle cycles and zombies, and the ledger that keeps them honest. |
-| [`lib/creatures.py`](lib/creatures.py) | What a window class has earned, what one window has eaten, and how old it is. The only thing here that writes. |
-| [`Roster.qml`](Roster.qml) | The bar panel: the switch, the creatures, and the food to feed them. |
-| [`Battle.qml`](Battle.qml) | The battle screen. Draws the snapshot the daemon publishes, and nothing else. |
-| [`PixelText.qml`](PixelText.qml) | An original 5x7 pixel font, drawn square by square onto a Canvas. |
-
-Full rules, the trigger path, the escape hatches and how to force one:
-[`docs/BATTLES.md`](docs/BATTLES.md). The pantry and its ledger:
-[`docs/FOOD.md`](docs/FOOD.md). Levels, evolution, hunger and the bar panel:
-[`docs/CREATURES.md`](docs/CREATURES.md).
-
 ## What it needs
 
 Hyprland and Python 3. That is the list.
@@ -188,6 +168,26 @@ The setting is a **file**, `~/.local/state/hyprscroll2d/battles-disabled`
 works with the daemon stopped, which is what lets the menu row answer while
 the shell is restarting. The daemon is only nudged afterwards, so that a
 battle already on screen can be ended.
+
+## What it adds
+
+| Piece | What it is |
+| --- | --- |
+| [`bin/battles`](bin/battles) | The daemon: moves the window, spots the collision, rolls the odds, borrows the controller, runs the fight. |
+| [`bin/hyprbattles-ctl`](bin/hyprbattles-ctl) | Move a window, read the state, switch battles on or off, or force one, from anywhere. |
+| [`hyprbattles.lua`](hyprbattles.lua) | Binds the move to your keys in a Lua-configured Hyprland. |
+| [`lib/window_moves.py`](lib/window_moves.py) | Which command moves a window one cell, per layout, and how to tell a swap from a step into an empty cell. |
+| [`lib/battle_rules.py`](lib/battle_rules.py) | The rules: creatures, types, damage, the turn loop. No I/O in it at all. |
+| [`lib/pantry.py`](lib/pantry.py) | The food: read-only readings of free memory, cache, swap, entropy, idle cycles and zombies, and the ledger that keeps them honest. |
+| [`lib/creatures.py`](lib/creatures.py) | What a window class has earned, what one window has eaten, and how old it is. The only thing here that writes. |
+| [`Roster.qml`](Roster.qml) | The bar panel: the switch, the creatures, and the food to feed them. |
+| [`Battle.qml`](Battle.qml) | The battle screen. Draws the snapshot the daemon publishes, and nothing else. |
+| [`PixelText.qml`](PixelText.qml) | An original 5x7 pixel font, drawn square by square onto a Canvas. |
+
+Full rules, the trigger path, the escape hatches and how to force one:
+[`docs/BATTLES.md`](docs/BATTLES.md). The pantry and its ledger:
+[`docs/FOOD.md`](docs/FOOD.md). Levels, evolution, hunger and the bar panel:
+[`docs/CREATURES.md`](docs/CREATURES.md).
 
 ## Your own music
 
