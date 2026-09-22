@@ -3,13 +3,10 @@
 Read this before changing anything: what the pieces are, which commands run
 them, and the invariants the tests enforce.
 
-It lives here, and not as a `CLAUDE.md` or `AGENTS.md` at the root, on
-purpose. The plugin directory is the installed plugin - the shell runs it from
-where it is cloned - so a file there that a coding agent loads on its own
-ships with the plugin, as instructions to run whatever it says. A guide under
-`docs/` is read when somebody hands it over, and never otherwise. If you work
-with an agent, point it here explicitly; a test fails if an agent-control
-file ever appears at the root.
+It is the guide for coding agents too. It is not a `CLAUDE.md` or an
+`AGENTS.md` at the root because the Omarchy plugin marketplace guidelines do
+not allow an agent-control file in a shipped plugin; point your agent here
+explicitly. A test fails if one ever appears at the root.
 
 ## What this is
 
