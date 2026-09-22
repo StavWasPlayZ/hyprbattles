@@ -97,7 +97,7 @@ one, battles are silent.
 ## Install
 
 ```bash
-omarchy plugin add <this repository> --enable
+omarchy plugin add https://github.com/StavWasPlayZ/hyprbattles --enable
 omarchy restart shell
 ```
 
