@@ -2,12 +2,13 @@
 --
 --   local battles = dofile(os.getenv("HOME")
 --     .. "/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/hyprbattles.lua")
---   battles.bind("SUPER + SHIFT", { "LEFT", "DOWN", "UP", "RIGHT" })
+--   battles.bind("SUPER + SHIFT")
 --
--- Keys come in left, down, up, right order - h, j, k, l - so a vim setup is
--- { "H", "J", "K", "L" }. Whatever sat on those keys is unbound first: the
--- move replaces it and keeps doing its job, battles on or off, daemon up or
--- down.
+-- That puts the move on the arrow keys, which is where Omarchy ships its own
+-- window swap. Other keys go in left, right, up, down order - vim keys are
+-- battles.bind("SUPER + SHIFT", { "H", "L", "K", "J" }). Whatever sat on those
+-- keys is unbound first: the move replaces it and keeps doing its job,
+-- battles on or off, daemon up or down.
 --
 -- dofile rather than require, because the plugin's directory name is full of
 -- dots and require reads every dot as a slash. The script finds itself, so
@@ -20,7 +21,8 @@ local M = {}
 
 local here = debug.getinfo(1, "S").source:match("^@(.*)/[^/]*$") or "."
 M.ctl = here .. "/bin/hyprbattles-ctl"
-M.directions = { "left", "down", "up", "right" }
+M.directions = { "left", "right", "up", "down" }
+M.arrows = { "LEFT", "RIGHT", "UP", "DOWN" }
 
 local function quote(text)
   return "'" .. text:gsub("'", "'\\''") .. "'"
@@ -31,10 +33,12 @@ function M.move(direction)
   return quote(M.ctl) .. " move " .. direction
 end
 
--- Bind four keys under one set of modifiers, left, down, up, right.
+-- Bind four keys under one set of modifiers - the arrows unless told
+-- otherwise, in left, right, up, down order.
 function M.bind(mods, keys)
+  keys = keys or M.arrows
   assert(type(keys) == "table" and #keys == 4,
-    "hyprbattles: bind(mods, keys) wants four keys, in left, down, up, right order")
+    "hyprbattles: bind(mods, keys) wants four keys, in left, right, up, down order")
   for i, direction in ipairs(M.directions) do
     local combo = mods .. " + " .. keys[i]
     hl.unbind(combo)

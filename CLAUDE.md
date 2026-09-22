@@ -68,7 +68,7 @@ controller events (`Daemon.KEYS`) so there is one set of handlers, not two.
 Other modules: `lib/pantry.py` (the `ITEM` food shelves and their ledger),
 `lib/battle_assets.py` (which directory each sound comes from),
 `hyprbattles.lua` (a `dofile`-able helper that binds `hyprbattles-ctl move`
-to four keys; it may bind that verb and dispatch nothing, which a test pins),
+to the arrows or four keys; it may bind that verb and dispatch nothing, which a test pins),
 `lib/hyprland.py` (the two Hyprland sockets, shared by the daemon and the CLI
 so a move made with the daemon down lands the same way).
 

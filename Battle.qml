@@ -280,7 +280,7 @@ Item {
 
                 // The keyboard plays the battle too. A collision a keyboard
                 // binding caused is a battle like any other, and reaching for
-                // a controller to finish one you started with SUPER+SHIFT+H
+                // a controller to finish one you started with SUPER+SHIFT+LEFT
                 // would be a silly thing to have to do. Arrows and hjkl move
                 // the cursor, Enter and Space take the option, Backspace
                 // steps back, Escape leaves.

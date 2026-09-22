@@ -119,11 +119,12 @@ that does it in two lines. For **Omarchy's default, `SUPER + SHIFT + arrows`**
 -- ~/.config/hypr/bindings.lua
 local battles = dofile(os.getenv("HOME")
   .. "/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/hyprbattles.lua")
-battles.bind("SUPER + SHIFT", { "LEFT", "DOWN", "UP", "RIGHT" })
+battles.bind("SUPER + SHIFT")
 ```
 
-The keys go in left, down, up, right order - h, j, k, l - so vim keys are
-`{ "H", "J", "K", "L" }`. Whatever was on those keys is unbound first, and the
+With no keys given it takes the arrows. Other keys go in left, right, up, down
+order - vim keys are `battles.bind("SUPER + SHIFT", { "H", "L", "K", "J" })`. Whatever was on
+those keys is unbound first, and the
 move takes over its job: the window moves whether battles are switched on or
 off, whether the roll comes up or not, and whether or not the daemon is even
 running - with the shell down, `hyprbattles-ctl move` makes Hyprland's move

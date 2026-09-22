@@ -814,7 +814,7 @@ class CollisionGate(unittest.TestCase):
 
     def test_a_keyboard_move_counts_too(self):
         # The trigger is the layout plugin's collision, which fires for any
-        # move. Throwing a window with SUPER + SHIFT + H deserves a battle
+        # move. Throwing a window with SUPER + SHIFT + LEFT deserves a battle
         # exactly as much as throwing it with the d-pad.
         daemon = self.daemon()
         daemon.on_collision(self.PAYLOAD, 100.5, "layout")
@@ -1161,14 +1161,15 @@ class TheLuaHelper(unittest.TestCase):
         self.assertIn('" move "', code)
 
     @unittest.skipUnless(shutil.which("lua"), "no lua interpreter")
-    def test_four_keys_become_the_four_moves(self):
+    def test_the_arrows_or_four_keys_become_the_four_moves(self):
         stub = (
             'hl = { dsp = {} }\n'
             'function hl.unbind(k) print("unbind|" .. k) end\n'
             'function hl.dsp.exec_cmd(c) return c end\n'
             'function hl.bind(k, d) print("bind|" .. k .. "|" .. d) end\n'
             'local b = dofile(arg[1])\n'
-            'b.bind("SUPER + SHIFT", { "H", "J", "K", "L" })\n'
+            'b.bind("SUPER + SHIFT")\n'
+            'b.bind("SUPER + ALT", { "H", "L", "K", "J" })\n'
             'print("short|" .. tostring(pcall(b.bind, "SUPER", { "H" })))\n')
         import subprocess
         out = subprocess.run(["lua", "-", self.PATH], input=stub, text=True,
@@ -1176,11 +1177,13 @@ class TheLuaHelper(unittest.TestCase):
         binds = [line.split("|")[1:] for line in out if line.startswith("bind|")]
         ctl = os.path.join(ROOT, "bin", "hyprbattles-ctl")
         self.assertEqual(binds, [
-            ["SUPER + SHIFT + " + key, "'%s' move %s" % (ctl, direction)]
-            for key, direction in zip("HJKL", ("left", "down", "up", "right"))])
+            [mods + key, "'%s' move %s" % (ctl, direction)]
+            for mods, keys in (("SUPER + SHIFT + ", ("LEFT", "RIGHT", "UP", "DOWN")),
+                               ("SUPER + ALT + ", "HLKJ"))
+            for key, direction in zip(keys, ("left", "right", "up", "down"))])
         # Whatever was on a key is unbound before the move takes it over.
-        self.assertEqual(out.index("unbind|SUPER + SHIFT + H") + 1,
-                         out.index("bind|SUPER + SHIFT + H|'%s' move left" % ctl))
+        self.assertEqual(out.index("unbind|SUPER + SHIFT + LEFT") + 1,
+                         out.index("bind|SUPER + SHIFT + LEFT|'%s' move left" % ctl))
         self.assertIn("short|false", out)
 
 

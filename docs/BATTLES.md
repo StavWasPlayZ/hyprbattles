@@ -23,7 +23,7 @@ Three things have to be true:
 - the 25% roll came up.
 
 It does not matter what asked for the move. A window thrown with
-`SUPER + SHIFT + H` deserves a battle exactly as much as one thrown with the
+`SUPER + SHIFT + LEFT` deserves a battle exactly as much as one thrown with the
 d-pad, and both are played the same way: the overlay takes the keyboard, and
 borrows the controller as well if there is one.
 
@@ -79,7 +79,7 @@ nothing when it is not.
 The one everybody has - a key bound to `hyprbattles-ctl move left`:
 
 ```
-SUPER + SHIFT + H
+SUPER + SHIFT + LEFT
   -> bin/hyprbattles-ctl move left  ->  the daemon's `move` verb
        -> the window list now
             -> hl.dsp.window.move({ direction = "l" })   (dwindle, master)
@@ -101,7 +101,7 @@ moved - so only one of the two can ever land.
 The shortcut, on a desktop that has Demon Slayer's Hyprscroll2D:
 
 ```
-a d-pad push, or SUPER + SHIFT + H
+a d-pad push, or SUPER + SHIFT + LEFT
   -> hl.dsp.layout("move left")
        -> the layout plugin's layout_msg "move"
             -> core.move() returns (true, <the window it displaced>)
