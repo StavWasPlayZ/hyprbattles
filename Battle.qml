@@ -33,7 +33,13 @@ Item {
 
     property var state: ({})
 
-    readonly property string statePath: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/hyprscroll2d-battle.json"
+    // The same place the daemon writes: $XDG_RUNTIME_DIR, or without one a
+    // private directory of this user's own under $XDG_STATE_HOME - never
+    // /tmp, where anybody on the machine could put a file of that name
+    // first. lib/runtime.py is the other half of this; keep them in step.
+    readonly property string statePath: (Quickshell.env("XDG_RUNTIME_DIR")
+        || ((Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state"))
+            + "/hyprscroll2d/run")) + "/hyprscroll2d-battle.json"
     readonly property string wallpaper: Quickshell.env("HOME") + "/.local/state/omarchy/current/background"
     readonly property string controlCommand: decodeURIComponent(
         Qt.resolvedUrl("bin/hyprbattles-ctl").toString().replace(/^file:\/\//, ""))

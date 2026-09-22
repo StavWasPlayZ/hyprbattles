@@ -93,12 +93,14 @@ import battle_rules as rules                                # noqa: E402
 import creatures                                            # noqa: E402
 import hyprland                                             # noqa: E402
 import pantry                                               # noqa: E402
+import runtime                                              # noqa: E402
 import window_moves as moves                                # noqa: E402
 
-RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+# The same directory the daemon binds in: $XDG_RUNTIME_DIR, or a private one
+# of this user's own, never /tmp. lib/runtime.py decides, for both.
+RUNTIME_DIR = runtime.runtime_dir()
 SOCKET_PATH = os.path.join(RUNTIME_DIR, "hyprscroll2d-battle.sock")
-STATE_HOME = (os.environ.get("XDG_STATE_HOME")
-              or os.path.expanduser("~/.local/state"))
+STATE_HOME = runtime.STATE_HOME
 # Presence means off. The file is the setting - not the daemon - so the menu
 # row can read and flip it while the shell is restarting, or before the daemon
 # has ever run. The daemon reads the same file on every collision.

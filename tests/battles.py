@@ -3656,5 +3656,327 @@ class GeneratedAudio(unittest.TestCase):
                         max(abs(value) for value in hit))
 
 
+# ------------------------------------------------------------- what ships
+#
+# Three boundaries a local stranger must never get across: a file of the
+# plugin's in a directory they can write to, a compositor reply big enough to
+# fill the daemon, and a file in the plugin that a coding agent takes as
+# orders.
+
+import runtime                                                # noqa: E402
+import stat                                                   # noqa: E402
+
+import hyprland                                               # noqa: E402
+
+
+class ARuntimeDirectoryOfOnesOwn(unittest.TestCase):
+    """The state file and the control socket go in $XDG_RUNTIME_DIR, or in a
+    private directory of the user's own - never /tmp, where anybody on the
+    machine can put a file of that name first and have the daemon write
+    through it. And they are written relative to a checked descriptor, so a
+    link left in the way is refused, not followed.
+    """
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.run_dir = os.path.join(self.directory, "run")
+        self.elsewhere = os.path.join(self.directory, "elsewhere")
+        os.mkdir(self.elsewhere)
+        self.victim = os.path.join(self.elsewhere, "precious")
+        with open(self.victim, "w") as handle:
+            handle.write("precious")
+        self.saved_env = dict(os.environ)
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self.saved_env)
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def daemon(self):
+        daemon = bd.Daemon()
+        daemon.runtime_dir = self.run_dir
+        return daemon
+
+    def test_the_fallback_is_this_user_s_own_and_never_tmp(self):
+        os.environ.pop("XDG_RUNTIME_DIR", None)
+        fallback = runtime.runtime_dir()
+        self.assertFalse(fallback.startswith("/tmp"))
+        self.assertEqual(fallback, runtime.FALLBACK_DIR)
+        self.assertTrue(fallback.startswith(runtime.STATE_HOME))
+        os.environ["XDG_RUNTIME_DIR"] = "/run/user/12345"
+        self.assertEqual(runtime.runtime_dir(), "/run/user/12345")
+
+    def test_the_daemon_the_cli_and_the_overlay_agree(self):
+        ctl = load_ctl()
+        self.assertEqual(ctl.RUNTIME_DIR, bd.RUNTIME_DIR)
+        self.assertEqual(ctl.SOCKET_PATH, bd.SOCKET_PATH)
+        with open(os.path.join(ROOT, "Battle.qml")) as handle:
+            qml = handle.read()
+        self.assertIn('"/hyprscroll2d/run"', qml)
+        self.assertIn('"/hyprscroll2d-battle.json"', qml)
+        self.assertNotIn('"/tmp"', qml)
+
+    def test_nothing_of_the_plugin_s_is_written_in_tmp(self):
+        # The one /tmp left in the daemon is the gamepad plugin's socket,
+        # which is that plugin's to place and is only ever sent to.
+        with open(os.path.join(ROOT, "bin", "battles")) as handle:
+            lines = [line for line in handle if '"/tmp"' in line]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("hyprscroll2d-gamepad.sock", lines[0])
+        for name in ("hyprbattles-ctl",):
+            with open(os.path.join(ROOT, "bin", name)) as handle:
+                self.assertNotIn('"/tmp"', handle.read())
+        with open(os.path.join(ROOT, "lib", "runtime.py")) as handle:
+            source = handle.read()
+        self.assertNotIn('"/tmp"', source)
+        self.assertNotIn("tempfile", source)
+
+    def test_the_directory_is_made_private(self):
+        descriptor = runtime.open_private(self.run_dir)
+        try:
+            info = os.stat(self.run_dir)
+            self.assertTrue(stat.S_ISDIR(info.st_mode))
+            self.assertEqual(stat.S_IMODE(info.st_mode), 0o700)
+            self.assertEqual(os.fstat(descriptor).st_ino, info.st_ino)
+        finally:
+            os.close(descriptor)
+
+    def test_a_missing_parent_is_made_too(self):
+        deep = os.path.join(self.directory, "state", "hyprscroll2d", "run")
+        os.close(runtime.open_private(deep))
+        self.assertEqual(stat.S_IMODE(os.stat(deep).st_mode), 0o700)
+
+    def test_a_link_in_the_directory_s_place_is_refused(self):
+        os.symlink(self.elsewhere, self.run_dir)
+        with self.assertRaises(OSError):
+            runtime.open_private(self.run_dir)
+        self.assertEqual(os.listdir(self.elsewhere), ["precious"])
+
+    def test_a_directory_others_may_write_is_refused(self):
+        os.mkdir(self.run_dir, 0o700)
+        os.chmod(self.run_dir, 0o777)
+        with self.assertRaises(OSError):
+            runtime.open_private(self.run_dir)
+
+    def test_somebody_else_s_directory_is_refused(self):
+        os.mkdir(self.run_dir, 0o700)
+        getuid = runtime.os.getuid
+        runtime.os.getuid = lambda: getuid() + 1
+        try:
+            with self.assertRaises(OSError):
+                runtime.open_private(self.run_dir)
+        finally:
+            runtime.os.getuid = getuid
+
+    def test_the_state_file_is_written_privately_and_atomically(self):
+        daemon = self.daemon()
+        daemon.publish()
+        state_path = os.path.join(self.run_dir, bd.STATE_NAME)
+        info = os.lstat(state_path)
+        self.assertTrue(stat.S_ISREG(info.st_mode))
+        self.assertEqual(stat.S_IMODE(info.st_mode), 0o600)
+        with open(state_path) as handle:
+            self.assertFalse(json.load(handle)["active"])
+        self.assertEqual(sorted(os.listdir(self.run_dir)), [bd.STATE_NAME])
+
+    def test_a_link_left_as_the_temporary_is_not_followed(self):
+        os.mkdir(self.run_dir, 0o700)
+        os.symlink(self.victim, os.path.join(self.run_dir,
+                                             bd.STATE_NAME + ".tmp"))
+        self.daemon().publish()
+        with open(self.victim) as handle:
+            self.assertEqual(handle.read(), "precious")
+        with open(os.path.join(self.run_dir, bd.STATE_NAME)) as handle:
+            self.assertIn("active", json.load(handle))
+
+    def test_a_link_left_as_the_state_file_is_replaced_not_written_through(self):
+        os.mkdir(self.run_dir, 0o700)
+        state_path = os.path.join(self.run_dir, bd.STATE_NAME)
+        os.symlink(self.victim, state_path)
+        self.daemon().publish()
+        with open(self.victim) as handle:
+            self.assertEqual(handle.read(), "precious")
+        self.assertTrue(stat.S_ISREG(os.lstat(state_path).st_mode))
+
+    def test_recovery_reads_nothing_through_a_link(self):
+        os.mkdir(self.run_dir, 0o700)
+        with open(self.victim, "w") as handle:
+            handle.write('{"active": true}')
+        os.symlink(self.victim, os.path.join(self.run_dir, bd.STATE_NAME))
+        daemon = self.daemon()
+        calls = []
+        daemon.set_bar = calls.append
+        daemon.recover()
+        self.assertEqual(calls, [])
+
+    def test_the_socket_is_bound_privately(self):
+        daemon = self.daemon()
+        before = os.umask(0)
+        os.umask(before)
+        daemon.bind_control()
+        try:
+            socket_path = os.path.join(self.run_dir, bd.SOCKET_NAME)
+            info = os.lstat(socket_path)
+            self.assertTrue(stat.S_ISSOCK(info.st_mode))
+            self.assertEqual(stat.S_IMODE(info.st_mode) & 0o077, 0)
+            after = os.umask(0)
+            os.umask(after)
+            self.assertEqual(after, before)
+        finally:
+            daemon.selector.unregister(daemon.control_socket)
+            daemon.control_socket.close()
+
+    def test_a_link_left_as_the_socket_goes_as_a_link(self):
+        os.mkdir(self.run_dir, 0o700)
+        os.symlink(self.victim, os.path.join(self.run_dir, bd.SOCKET_NAME))
+        daemon = self.daemon()
+        daemon.bind_control()
+        try:
+            self.assertTrue(os.path.exists(self.victim))
+            info = os.lstat(os.path.join(self.run_dir, bd.SOCKET_NAME))
+            self.assertTrue(stat.S_ISSOCK(info.st_mode))
+        finally:
+            daemon.selector.unregister(daemon.control_socket)
+            daemon.control_socket.close()
+
+    def test_an_unusable_directory_costs_the_file_not_the_daemon(self):
+        os.symlink(self.elsewhere, self.run_dir)
+        daemon = self.daemon()
+        daemon.publish()                   # logs, does not raise
+        daemon.recover()
+        self.assertEqual(os.listdir(self.elsewhere), ["precious"])
+
+
+class WhatTheCompositorSays(unittest.TestCase):
+    """A reply from Hyprland's command socket is capped on the way in and
+    bounded on the way out. A window's title is whatever the window says it
+    is, and `clients` is asked for on a timer, by the daemon and the panel
+    both: without a ceiling, one window could grow both without limit.
+    """
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.hypr = hyprland.Hyprland()
+        self.hypr.command_socket = os.path.join(self.directory, "cmd.sock")
+        self.limit = hyprland.REPLY_LIMIT
+        self.worker = None
+
+    def tearDown(self):
+        hyprland.REPLY_LIMIT = self.limit
+        if self.worker:
+            self.worker.join(5.0)
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def serve(self, payload):
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(self.hypr.command_socket)
+        server.listen(1)
+        server.settimeout(5.0)
+
+        def run():
+            try:
+                connection, _ = server.accept()
+                with connection:
+                    connection.settimeout(5.0)
+                    connection.recv(4096)
+                    connection.sendall(payload)
+            except OSError:
+                pass
+            finally:
+                server.close()
+
+        self.worker = threading.Thread(target=run)
+        self.worker.start()
+
+    def test_a_reply_under_the_limit_is_read_whole(self):
+        windows = [window("0x%x" % index, "foot") for index in range(40)]
+        self.serve(json.dumps(windows).encode())
+        self.assertEqual(self.hypr.query("clients"), windows)
+
+    def test_a_reply_past_the_limit_is_no_reply(self):
+        hyprland.REPLY_LIMIT = 4096
+        windows = [window("0x%x" % index, "foot") for index in range(200)]
+        payload = json.dumps(windows).encode()
+        self.assertGreater(len(payload), 4096)
+        self.serve(payload)
+        self.assertIsNone(self.hypr.query("clients"))
+
+    def test_the_limit_is_generous_and_finite(self):
+        self.assertGreaterEqual(hyprland.REPLY_LIMIT, 1024 * 1024)
+        self.assertLessEqual(hyprland.REPLY_LIMIT, 64 * 1024 * 1024)
+        self.assertGreaterEqual(hyprland.MAX_STRING, 256)
+        self.assertGreaterEqual(hyprland.MAX_ITEMS, 64)
+        self.assertGreaterEqual(hyprland.MAX_DEPTH, 4)
+
+    def test_a_bottomless_document_is_no_answer(self):
+        self.serve(b"[" * 200000)
+        self.assertIsNone(self.hypr.query("clients"))
+
+    def test_a_title_is_cut_to_size(self):
+        bounded = hyprland.bounded({"title": "x" * 5000, "pid": 7})
+        self.assertEqual(len(bounded["title"]), hyprland.MAX_STRING)
+        self.assertEqual(bounded["pid"], 7)
+
+    def test_a_list_and_an_object_are_cut_to_size(self):
+        many = hyprland.MAX_ITEMS * 3
+        self.assertEqual(len(hyprland.bounded([0] * many)),
+                         hyprland.MAX_ITEMS)
+        keys = hyprland.bounded({str(index): index for index in range(many)})
+        self.assertEqual(len(keys), hyprland.MAX_ITEMS)
+
+    def test_nesting_stops(self):
+        value = "leaf"
+        for _ in range(50):
+            value = [value]
+        bounded = hyprland.bounded(value)
+        depth = 0
+        while isinstance(bounded, list) and bounded:
+            bounded = bounded[0]
+            depth += 1
+        self.assertLessEqual(depth, hyprland.MAX_DEPTH)
+        self.assertEqual(bounded, [])
+
+    def test_what_a_window_says_is_bounded_before_anyone_reads_it(self):
+        many = hyprland.MAX_ITEMS + 100
+        windows = [window("0x%x" % index, "foot") for index in range(many)]
+        windows[0]["title"] = "t" * (hyprland.MAX_STRING * 4)
+        self.serve(json.dumps(windows).encode())
+        clients = self.hypr.query("clients")
+        self.assertEqual(len(clients), hyprland.MAX_ITEMS)
+        self.assertEqual(len(clients[0]["title"]), hyprland.MAX_STRING)
+
+    def test_nothing_else_reads_the_command_socket(self):
+        for name in ("bin/battles", "bin/hyprbattles-ctl",
+                     "lib/creatures.py", "lib/window_moves.py",
+                     "lib/pantry.py", "lib/battle_rules.py"):
+            with open(os.path.join(ROOT, name)) as handle:
+                source = handle.read()
+            self.assertNotIn(".socket.sock", source, name)
+            self.assertNotIn("SOCK_STREAM", source, name)
+
+
+class NothingAnAgentObeys(unittest.TestCase):
+    """The plugin directory is the installed plugin, and a coding agent run
+    from it loads some files as instructions without being asked. None of
+    those may ship. The developer guide is under docs/, where it is read
+    when handed over and never otherwise."""
+
+    AGENT_FILES = ("CLAUDE.md", "AGENTS.md", "GEMINI.md", ".cursorrules",
+                   ".windsurfrules", ".clinerules", ".claude", ".cursor",
+                   os.path.join(".github", "copilot-instructions.md"))
+
+    def test_no_agent_control_file_at_the_root(self):
+        for name in self.AGENT_FILES:
+            self.assertFalse(os.path.lexists(os.path.join(ROOT, name)), name)
+
+    def test_the_guide_is_where_the_readme_says(self):
+        guide = os.path.join(ROOT, "docs", "DEVELOPING.md")
+        self.assertTrue(os.path.exists(guide))
+        with open(os.path.join(ROOT, "README.md")) as handle:
+            self.assertIn("docs/DEVELOPING.md", handle.read())
+        with open(guide) as handle:
+            self.assertNotIn("guidance to Claude Code", handle.read())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

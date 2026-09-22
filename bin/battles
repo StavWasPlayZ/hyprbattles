@@ -45,19 +45,28 @@ import battle_rules as rules                                # noqa: E402
 import creatures                                           # noqa: E402
 import hyprland                                            # noqa: E402
 import pantry                                              # noqa: E402
+import runtime                                             # noqa: E402
 import window_moves as moves                               # noqa: E402
 
 PR_SET_PDEATHSIG = 1
 
-RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
-STATE_HOME = (os.environ.get("XDG_STATE_HOME")
-              or os.path.expanduser("~/.local/state"))
+# $XDG_RUNTIME_DIR, or a private directory of this user's own - never /tmp,
+# where a predictable name is an invitation. lib/runtime.py is the whole of
+# that decision, and of how anything in there is written: the directory is
+# opened once, checked, and every file is made relative to that descriptor.
+RUNTIME_DIR = runtime.runtime_dir()
+STATE_HOME = runtime.STATE_HOME
 
-STATE_PATH = os.path.join(RUNTIME_DIR, "hyprscroll2d-battle.json")
-SOCKET_PATH = os.path.join(RUNTIME_DIR, "hyprscroll2d-battle.sock")
+STATE_NAME = "hyprscroll2d-battle.json"
+SOCKET_NAME = "hyprscroll2d-battle.sock"
+STATE_PATH = os.path.join(RUNTIME_DIR, STATE_NAME)
+SOCKET_PATH = os.path.join(RUNTIME_DIR, SOCKET_NAME)
 # The gamepad plugin's control socket, which is also where a lease is asked
-# for. Only the path is shared; nothing else about that plugin is known here.
-GAMEPAD_SOCKET = os.path.join(RUNTIME_DIR, "hyprscroll2d-gamepad.sock")
+# for. Only the path is shared; nothing else about that plugin is known here,
+# and nothing is ever created at it - it is where that plugin listens, so it
+# is looked for where that plugin puts it, its own fallback included.
+GAMEPAD_SOCKET = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "hyprscroll2d-gamepad.sock")
 
 # Presence of the flag means battles are off, matching the way the bar toggle
 # and the minimap remember themselves.
@@ -314,6 +323,10 @@ class PadLease:
 class Daemon:
     def __init__(self):
         self.hypr = hyprland.Hyprland()
+        # Where the state file and the control socket go, opened on first
+        # use and kept: see runtime() below.
+        self.runtime_dir = RUNTIME_DIR
+        self.runtime_fd = None
         # Bar toggles and notifiers still to be reaped; see set_bar.
         self._bar_toggles = []
         self._notifiers = []
@@ -792,16 +805,23 @@ class Daemon:
         snapshot["input"] = self.input
         return snapshot
 
+    def runtime(self):
+        """The directory the state file and the control socket live in, as
+        a descriptor: opened once, checked to be this user's own and nobody
+        else's to write to, and every file in it made relative to it
+        (lib/runtime.py). Raises OSError when there is no such directory
+        to be had, and every caller says so and carries on."""
+        if self.runtime_fd is None:
+            self.runtime_fd = runtime.open_private(self.runtime_dir)
+        return self.runtime_fd
+
     def publish(self):
         state = self.state()
         if state == self.published:
             return
         self.published = state
         try:
-            temporary = STATE_PATH + ".tmp"
-            with open(temporary, "w") as handle:
-                handle.write(json.dumps(state))
-            os.replace(temporary, STATE_PATH)
+            runtime.write(self.runtime(), STATE_NAME, json.dumps(state))
         except OSError as error:
             log("cannot write state: %s" % error)
 
@@ -814,8 +834,7 @@ class Daemon:
         evidence left, so it is what the bar is brought back on.
         """
         try:
-            with open(STATE_PATH) as handle:
-                stale = json.load(handle)
+            stale = json.loads(runtime.read(self.runtime(), STATE_NAME))
         except (OSError, ValueError):
             return
         if stale.get("active"):
@@ -1063,12 +1082,20 @@ class Daemon:
     # --------------------------------------------------------- event loop
 
     def bind_control(self):
-        try:
-            os.unlink(SOCKET_PATH)
-        except OSError:
-            pass
+        # The directory is checked before anything is put in it, and the
+        # stale name is removed as a name - a link somebody left there goes,
+        # not what it points at. bind() takes a path, there being no way to
+        # bind relative to a descriptor, so the socket node itself is made
+        # under a mask that leaves it readable and writable by this user
+        # only; the directory is already nobody else's.
+        directory = self.runtime()
+        runtime.remove(directory, SOCKET_NAME)
         server = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-        server.bind(SOCKET_PATH)
+        mask = os.umask(0o077)
+        try:
+            server.bind(os.path.join(self.runtime_dir, SOCKET_NAME))
+        finally:
+            os.umask(mask)
         server.setblocking(False)
         self.control_socket = server
         self.selector.register(server, selectors.EVENT_READ, "control")
@@ -1233,11 +1260,12 @@ class Daemon:
             self.sound.stop()
             self.effects.stop()
         self.pad.close()
-        for path in (SOCKET_PATH, STATE_PATH):
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+        try:
+            directory = self.runtime()
+            for name in (SOCKET_NAME, STATE_NAME):
+                runtime.remove(directory, name)
+        except OSError:
+            pass
 
 
 def die_with_parent():

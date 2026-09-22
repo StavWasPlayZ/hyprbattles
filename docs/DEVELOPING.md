@@ -1,6 +1,15 @@
-# CLAUDE.md
+# Developing hyprbattles
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Read this before changing anything: what the pieces are, which commands run
+them, and the invariants the tests enforce.
+
+It lives here, and not as a `CLAUDE.md` or `AGENTS.md` at the root, on
+purpose. The plugin directory is the installed plugin - the shell runs it from
+where it is cloned - so a file there that a coding agent loads on its own
+ships with the plugin, as instructions to run whatever it says. A guide under
+`docs/` is read when somebody hands it over, and never otherwise. If you work
+with an agent, point it here explicitly; a test fails if an agent-control
+file ever appears at the root.
 
 ## What this is
 
@@ -54,6 +63,7 @@ no pad and no screen:
 | Rules | `lib/battle_rules.py` | Creatures, types, damage, turn loop, menus, timeouts, and the progression maths - experience, stages, appetite - plus the `Evolution` scene. **Zero I/O.** Emits a snapshot dict after every change. |
 | Records | `lib/creatures.py` | What a window class has earned, what one live window has eaten, window uptime and the agent running in a window off `/proc`, and the roster/feed the daemon and the CLI share. The only module here that writes anything but a ledger. |
 | Moves | `lib/window_moves.py` | Which command moves a window one cell per layout, and whether a move swapped two windows. **Zero I/O.** |
+| Runtime files | `lib/runtime.py` | Where the state file and the control socket go (`$XDG_RUNTIME_DIR`, or a private `0700` directory of the user's own - never `/tmp`), and how they are written: descriptor-relative, exclusive, no-follow, `0600`. |
 | Wiring | `bin/battles` (daemon) | Sockets, sound, pad lease, bar toggle, the roll, publishing the snapshot. |
 | Picture | `Battle.qml` + `BattleFighter/BattleStatusBox/BattleTypeChip/PixelText.qml` | Draws the snapshot and nothing else. Two scenes: `scene: "battle"` and `scene: "evolve"`. |
 | Panel | `Roster.qml` (bar widget) | The switch, one card per window, and the food. Reads `hyprbattles-ctl roster --json`, writes through `hyprbattles-ctl feed`. Cannot reach a window. Agent cards wear Omarchy's own marks (`shell/plugins/agents/assets/*.svg`, then the default-agent menu glyph), which is why the agent names are Omarchy's names. |
@@ -70,7 +80,10 @@ Other modules: `lib/pantry.py` (the `ITEM` food shelves and their ledger),
 `hyprbattles.lua` (a `dofile`-able helper that binds `hyprbattles-ctl move`
 to the arrows or four keys; it may bind that verb and dispatch nothing, which a test pins),
 `lib/hyprland.py` (the two Hyprland sockets, shared by the daemon and the CLI
-so a move made with the daemon down lands the same way).
+so a move made with the daemon down lands the same way; it also caps a reply
+at `REPLY_LIMIT` bytes and bounds what is kept of one - `MAX_ITEMS`,
+`MAX_STRING`, `MAX_DEPTH` - before any of it reaches the overlay or the
+panel, since a title is whatever the window says it is).
 
 ### No plugin is required, and none is ever linked
 
@@ -167,6 +180,22 @@ Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
   `ask()`, `already_running()`) are abstract, so anything local can post
   to them; a datagram from anywhere but the daemon's own bound path is
   dropped unread.
+- **Nothing of the plugin's is ever written in `/tmp`.** Without an
+  `$XDG_RUNTIME_DIR` the state file and the control socket go to a private
+  `0700` directory of the user's own under `$XDG_STATE_HOME`, and
+  `Battle.qml` computes the same path. The directory is opened once and
+  checked - a real directory, this user's, writable by nobody else, no
+  symlink in its place - and every file is created relative to that
+  descriptor, exclusively, without following a link, mode `0600`
+  (`lib/runtime.py`, `ARuntimeDirectoryOfOnesOwn`).
+- **A compositor reply is capped, and what is kept of it is bounded.**
+  `lib/hyprland.py` drops a reply past `REPLY_LIMIT` whole and cuts every
+  string, list and object it parses to `MAX_STRING`/`MAX_ITEMS`/`MAX_DEPTH`
+  before anything is published; nothing else may read the command socket
+  (`WhatTheCompositorSays`).
+- **No agent-control file ships.** No `CLAUDE.md`, `AGENTS.md`, `.claude/`
+  or the like at the root; this guide is under `docs/` so that nothing an
+  agent loads on its own is part of the plugin (`NothingAnAgentObeys`).
 - **The bar icon is never the urgent colour.** On is the bar's own colour, off
   is grey, and the red dot appears only when a creature is one meal on the
   shelves away from evolving - and never while battles are off.
@@ -183,6 +212,10 @@ have been open and everything it has eaten).
 Files, because the Omarchy menu row's `checked` condition and `hyprbattles-ctl`
 must answer while the shell is restarting. `hyprbattles-ctl` reads/writes them
 directly and only *nudges* the daemon afterwards.
+
+The two that last only as long as the daemon - the state file the overlay
+watches and the control socket - live in `$XDG_RUNTIME_DIR`, or without one
+in `~/.local/state/hyprscroll2d/run/` (`lib/runtime.py`).
 
 `creatures.json` is also the sleeping list: the daemon writes a record for
 every window open at startup and for every `openwindow` event (class taken

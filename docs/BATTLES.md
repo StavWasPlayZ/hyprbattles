@@ -510,6 +510,11 @@ publishes a snapshot to `$XDG_RUNTIME_DIR/hyprscroll2d-battle.json` after every
 change. That split is why the rules can be tested without a screen, and why a
 mistake in the drawing cannot reach a window.
 
+Without an `$XDG_RUNTIME_DIR` the file, and the control socket next to it, go
+to `~/.local/state/hyprscroll2d/run/`, a directory of your own made `0700` -
+never `/tmp`, where anybody on the machine could have put a file of that name
+first. The overlay computes the same path.
+
 The fighters are live [`ScreencopyView`](../BattleFighter.qml)s of the two
 toplevels, so a terminal keeps scrolling and a video keeps playing while it is
 being attacked. Nothing is moved or re-parented to put them there.
