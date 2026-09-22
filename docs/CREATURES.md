@@ -286,11 +286,15 @@ hurry came for - then a card per creature, hungriest first. Each card carries
 the application's own icon, the type as its colour, the name, a `x2` when it
 has more than one window open, a star per evolution, the level, the record,
 how long its eldest window has been up, how far it is from the next level,
-and a bar for how much of its appetite it has eaten - empty is a
-creature that has had nothing, full is one with no room left. The
-icon is looked up the way the rest of the shell looks one up - the desktop
-entry for the class, then the class as an icon name - and a window that has
-none simply shows its type chip, as it did before.
+and a bar for how much of its appetite it has eaten - empty is a creature
+that has had nothing, full is one with no room left. A card one meal on the
+shelves away from evolving says so twice and in one colour: the line under
+the bar reads "One meal from evolving", and the experience above it turns
+the creature's own type colour. That is the card's half of the red dot on
+the icon - the dot says somebody is ready, the card says which one and how
+close. The icon is looked up the way the rest of the shell looks one up -
+the desktop entry for the class, then the class as an icon name - and a
+window that has none simply shows its type chip, as it did before.
 
 An agent has no desktop entry to look up, so it wears **the face Omarchy
 already gives it**: the coloured mark from the shell's own agents panel
@@ -341,7 +345,11 @@ share the first, because both are lists of windows. **All food** has the row
 under them to itself, because it is about the machine.
 
 **Best windows** lists every creature, open or asleep, strongest first, with
-its record next to its experience. A switch at the top picks the order.
+its record next to its experience - the wins in the HP bar's green and the
+losses in its red, the same two colours the window's own page gives WINS and
+LOSSES. `11W 9L` in one grey run is two numbers you have to take apart
+before either says anything, and on the one screen that exists to rank
+things they are the point. A switch at the top picks the order.
 **By experience** sorts on experience alone. Level and stage are both read
 off experience, so sorting on stage first would change nothing; ties go to
 the better win rate. **By win rate** sorts on `(wins + 1) / (wins + losses +
