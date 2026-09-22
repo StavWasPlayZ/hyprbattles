@@ -1307,7 +1307,7 @@ Panel {
 
                     Door {
                         width: (parent.width - Style.spacing.md) / 2
-                        label: "By experience"
+                        label: "󰓎  By experience"
                         chevron: false
                         lit: root.ranking === "xp"
                         onClicked: root.ranking = "xp"
@@ -1315,7 +1315,7 @@ Panel {
 
                     Door {
                         width: (parent.width - Style.spacing.md) / 2
-                        label: "By win rate"
+                        label: "󰞇  By win rate"
                         chevron: false
                         lit: root.ranking === "wins"
                         onClicked: root.ranking = "wins"
@@ -1435,7 +1435,7 @@ Panel {
                         width: parent.width
                         text: root.view === "roster" ? "WINDOWS"
                             : (root.view === "sleeping" ? "SLEEPING WINDOWS"
-                               : root.view === "best" ? "BEST WINDOWS"
+                               : root.view === "best" ? "󰔸  BEST WINDOWS"
                                : root.view === "pantry" ? "ALL FOOD"
                                : (root.view === "moves"
                                   ? "SLOT " + (root.slot + 1)
