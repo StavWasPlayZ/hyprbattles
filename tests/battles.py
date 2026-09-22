@@ -27,6 +27,7 @@ import tempfile
 import threading
 import unittest
 import wave
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
@@ -3388,7 +3389,7 @@ class Evolving(unittest.TestCase):
         # the bar, or a window.
         with open(os.path.join(ROOT, "bin", "battles")) as handle:
             source = handle.read()
-        body = source[source.index("    def evolve(self, window, evolved, now):"):
+        body = source[source.index("    def evolve(self, "):
                       source.index("    def tick_scene(self, now):")]
         for forbidden in ("dispatch", "set_bar", "pad.grab", "moves.command"):
             self.assertNotIn(forbidden, body, forbidden)
@@ -3404,7 +3405,7 @@ class WhatABattleIsWorth(unittest.TestCase):
         daemon.battle = None
         daemon.effects = FakeSound()
         daemon.publish = lambda: None
-        daemon.monitor_name = lambda client: "DP-1"
+        daemon.monitor_name = lambda client=None, named="": "DP-1"
         return daemon
 
     def fight(self, result):
@@ -3446,6 +3447,74 @@ class WhatABattleIsWorth(unittest.TestCase):
         body = source[source.index("        self.battle = fight"):]
         self.assertIn("self.scene = None", body[:200],
                       "a battle starting clears any evolution on screen")
+
+
+class WhereAnEvolutionPlays(unittest.TestCase):
+    """An evolution borrows the screen you are looking at.
+
+    A meal used to play it on the fed window's own monitor, which on a desk
+    of several was as often as not a different one from the panel the meal
+    was given from - the picture played to nobody. A fight's still plays
+    where the fight was.
+    """
+
+    MONITORS = [{"id": 0, "name": "HDMI-A-2", "focused": False},
+                {"id": 1, "name": "DP-3", "focused": False},
+                {"id": 2, "name": "DP-4", "focused": True}]
+
+    def setUp(self):
+        # The fed window is on the first monitor; neither the panel's nor the
+        # focused one.
+        self.fed = dict(window("0x1", "discord"), monitor=0)
+        replies = {"monitors": self.MONITORS, "clients": [self.fed]}
+        daemon = bd.Daemon.__new__(bd.Daemon)
+        daemon.creatures = store()
+        daemon.scene = None
+        daemon.battle = None
+        daemon.pantry = None
+        daemon.effects = FakeSound()
+        daemon.publish = lambda: None
+        daemon.hypr = type("Q", (), {"query": staticmethod(replies.get)})()
+        self.daemon = daemon
+        self.evolved = battles.creature(self.fed, {"xp": 4000})
+        meal = {"ok": True, "evolved": True, "creature": self.evolved}
+        patcher = mock.patch.object(bd.creatures, "feed",
+                                    lambda *args, **kwargs: meal)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def shown_on(self):
+        self.assertIsNotNone(self.daemon.scene, "the meal evolved it")
+        return self.daemon.scene.snapshot()["monitor"]
+
+    def test_a_meal_plays_on_the_monitor_the_panel_is_open_on(self):
+        self.daemon.feed("0x1", "staple", 0.0, "DP-3")
+        self.assertEqual(self.shown_on(), "DP-3")
+
+    def test_the_panel_names_its_monitor_over_the_socket(self):
+        self.daemon.handle_command("feed 0x1 staple DP-3")
+        self.assertEqual(self.shown_on(), "DP-3")
+
+    def test_a_meal_from_the_shell_plays_on_the_focused_monitor(self):
+        self.daemon.feed("0x1", "staple", 0.0)
+        self.assertEqual(self.shown_on(), "DP-4")
+
+    def test_a_monitor_that_is_not_there_is_the_focused_one(self):
+        # The overlay draws only on the screen named; a name that matches
+        # none of them would draw it nowhere.
+        self.daemon.feed("0x1", "staple", 0.0, "DP-9")
+        self.assertEqual(self.shown_on(), "DP-4")
+
+    def test_a_fight_still_plays_where_the_fight_was(self):
+        self.daemon.evolve(self.evolved, 0.0, window=self.fed)
+        self.assertEqual(self.shown_on(), "HDMI-A-2")
+
+    def test_the_panel_sends_the_screen_it_is_on(self):
+        with open(os.path.join(ROOT, "Roster.qml")) as handle:
+            source = handle.read()
+        body = source[source.index("    function feed(shelfKey) {"):]
+        body = body[:body.index("\n    }\n")]
+        self.assertIn("panel.screen.name", body)
 
 
 class Music(unittest.TestCase):

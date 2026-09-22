@@ -516,8 +516,13 @@ Panel {
 
     function feed(shelfKey) {
         if (!chosen || feedProcess.running) return
-        feedProcess.command = launcher.command(root.controlCommand,
-            ["feed", String(chosen.address), String(shelfKey), "--json"])
+        // The screen this panel is open on goes with the meal, so an
+        // evolution it buys plays here, where you are looking - not on
+        // whichever monitor the fed window happens to be.
+        var args = ["feed", String(chosen.address), String(shelfKey)]
+        if (panel.screen && panel.screen.name) args.push(String(panel.screen.name))
+        args.push("--json")
+        feedProcess.command = launcher.command(root.controlCommand, args)
         feedProcess.running = true
     }
 

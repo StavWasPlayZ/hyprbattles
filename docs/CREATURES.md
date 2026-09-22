@@ -119,6 +119,11 @@ window itself in the middle, a flash that quickens, and the new name. Escape
 skips it. The record is written *before* the picture starts, so skipping it
 can only ever cost you the picture.
 
+It plays where you are looking. An evolution a fight bought plays on the
+challenger's monitor, where the fight was; one a meal bought plays on the
+monitor the panel is open on (from the shell, the focused one) - never on the
+fed window's own, which can be any monitor you have, or none once it has shut.
+
 An evolution is not a battle. It holds no pad, hides no bar, and cannot send
 a window anywhere - a test reads the daemon's `evolve()` and fails if it ever
 learns how.
@@ -359,7 +364,8 @@ way out of wherever you are.
 
 The panel **draws and asks; it decides nothing**. Everything it shows comes
 from `hyprbattles-ctl roster --json`, and feeding goes back through
-`hyprbattles-ctl feed <address> <shelf>`, which is the same path the daemon takes.
+`hyprbattles-ctl feed <address> <shelf> <monitor>`, which is the same path the
+daemon takes - the monitor being the panel's own, so an evolution plays there.
 Both work with the daemon stopped, because both are the files rather than the
 process; what a stopped daemon costs you is the evolution animation, not the
 evolution.

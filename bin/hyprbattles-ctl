@@ -30,14 +30,15 @@
                                     # keep their levels, their moves and the
                                     # appetite their windows earned; what they
                                     # have not got is a window to eat with.
-    hyprbattles-ctl feed <addr> <shelf>
+    hyprbattles-ctl feed <addr> <shelf> [monitor]
                                     # feed one creature one portion, through any
                                     # of its windows. The machine has to have the
                                     # food spare and the creature has to have the
                                     # appetite for it - the hours its windows have
                                     # been open buy that, and they outlast any one
                                     # window. Levels are earned this way, and
-                                    # enough of them evolve the creature.
+                                    # enough of them evolve the creature - on the
+                                    # monitor named, or the focused one.
 
     hyprbattles-ctl assets          # which sound is coming from which file, and
                                     # why. The thing to run when your own file is

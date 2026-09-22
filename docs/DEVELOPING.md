@@ -28,7 +28,7 @@ bin/hyprbattles-ctl                 # current battle state as JSON (needs the da
 bin/hyprbattles-ctl debug           # force a battle; pick N / advance to drive it
 bin/hyprbattles-ctl pantry          # the food shelves, read-only, daemon or not
 bin/hyprbattles-ctl roster          # every window as a creature (--json for the panel)
-bin/hyprbattles-ctl feed <addr> <shelf>   # one portion, daemon or not
+bin/hyprbattles-ctl feed <addr> <shelf> [monitor]   # one portion, daemon or not; an evolution plays on [monitor] or the focused one
 bin/hyprbattles-ctl sleeping        # creatures whose windows are shut
 bin/hyprbattles-ctl moves <addr>    # the four carried, and the whole learnset
 bin/hyprbattles-ctl teach <addr> <slot> <TYPE:n>   # swap one of the four
