@@ -100,42 +100,45 @@ omarchy plugin add <this repository> --enable
 omarchy restart shell
 ```
 
-Then put the move on a key. This is what makes windows collide: it moves the
+### Route window moves through the plugin
+This is what makes windows collide: it moves the
 focused window one cell exactly as the layout underneath it would have, and
 rolls for a battle when that move lands on somebody.
 
-```bash
-# ~/.config/hypr/bindings.lua, where Hyprland is configured in Lua
+**Use the keys you already move windows with.** The point is to take over the
+move you actually press, not to add a second one beside it - so change the
+modifiers and keys below to match your own bindings. `hyprctl binds` lists what is on which key now.
+
+For **Omarchy's default, `SUPER + SHIFT + arrows`**, those keys are
+bound to *Swap window* out of the box
+(`/usr/share/omarchy/default/hypr/bindings/tiling.lua`); this takes them over:
+
+```lua
+-- ~/.config/hypr/bindings.lua
 local battles = os.getenv("HOME")
   .. "/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/hyprbattles-ctl"
-for _, d in ipairs({ { "H", "left" }, { "J", "down" }, { "K", "up" }, { "L", "right" } }) do
+for _, d in ipairs({ { "LEFT", "left" }, { "DOWN", "down" }, { "UP", "up" }, { "RIGHT", "right" } }) do
+  hl.unbind("SUPER + SHIFT + " .. d[1]) -- was: Swap window <dir>
   o.bind("SUPER + SHIFT + " .. d[1], "Window: Move " .. d[2],
     battles .. " move " .. d[2])
 end
 ```
 
-```ini
-# or, in a hyprland.conf
-bind = SUPER SHIFT, H, exec, ~/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/hyprbattles-ctl move left
-```
+If something else already sits on the keys you pick, `hl.unbind` it first.
+The bind replaces whatever move dispatcher was on those keys and keeps doing
+that job: the window moves whether battles are switched on or off, whether the
+roll comes up or not, and whether or not the daemon is even running - with the
+shell down, `hyprbattles-ctl move` makes Hyprland's move itself.
 
-It replaces whatever move dispatcher was on those keys and keeps doing that
-job: the window moves whether battles are switched on or off, whether the roll
-comes up or not, and whether or not the daemon is even running - with the
-shell down, the command makes the move itself. **On Demon Slayer's
-Hyprscroll2D you can skip this entirely**; that layout posts its own
-collisions, so its own move keys already trigger battles.
+`hl.unbind` matches the bind string literally, modifier order
+included, so spell it exactly as the bind you are replacing does.
 
-Then add the toggle to `~/.config/omarchy/extensions/omarchy-menu.jsonc`:
+> [!NOTE]
+> On **Demon Slayer's Hyprscroll2D** you can skip this entirely; that layout
+> posts its own collisions, so its own move keys already trigger battles.
 
-```jsonc
-"trigger.toggle.window-battles": {"icon":"\udb81\udf87","label":"Window Battles","aliases":["battles","hyprbattles","pokemon"],"when":"test -x $HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/hyprbattles-ctl","checked":"[ \"$($HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/hyprbattles-ctl enabled)\" = true ]","action":"$HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/hyprbattles-ctl toggle"},
-```
-
-It lands under **Trigger -> Toggle**, beside the other switches, with a tick
-while battles are on.
-
-And put the bar icon on the bar - the switch, the roster and the food all live
+### Bar icon
+The switch, the roster and the food all live
 behind it:
 
 ```bash
@@ -145,8 +148,19 @@ omarchy bar put dev.cstav.omarchy.plugin.hyprbattles --section right
 If that says it is already on the bar without adding it, the id is in
 `plugins` but not in the layout; add `{"id": "dev.cstav.omarchy.plugin.hyprbattles"}`
 to `bar.layout.right` in `~/.config/omarchy/shell.json` yourself. The icon is
-the same crossed swords the menu row carries, grey while battles are off, and
+a pair of crossed swords, grey while battles are off, and
 it lights a small red dot only when a creature is one meal from evolving.
+
+### Optional: the switch in the Omarchy menu
+The bar icon already carries this switch, so this only matters if you want it under the menu too. Add it to
+`~/.config/omarchy/extensions/omarchy-menu.jsonc`:
+
+```jsonc
+"trigger.toggle.window-battles": {"icon":"\udb81\udf87","label":"Window Battles","aliases":["battles","hyprbattles","pokemon"],"when":"test -x $HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/hyprbattles-ctl","checked":"[ \"$($HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/hyprbattles-ctl enabled)\" = true ]","action":"$HOME/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/hyprbattles-ctl toggle"},
+```
+
+It lands under **Trigger -> Toggle**, beside the other switches, with a tick
+while battles are on.
 
 ## Turning it off
 
