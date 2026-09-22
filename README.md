@@ -169,6 +169,37 @@ works with the daemon stopped, which is what lets the menu row answer while
 the shell is restarting. The daemon is only nudged afterwards, so that a
 battle already on screen can be ended.
 
+## Removing it
+
+Take the move keys back first. `bindings.lua` `dofile`s the helper out of the
+plugin folder, so removing the plugin while that line is still there leaves
+Hyprland's config pointing at a file that is gone. Delete the two
+`battles` lines from `~/.config/hypr/bindings.lua` (or the
+`unbind`/`bind` lines from `hyprland.conf`); on the next reload the keys go
+back to whatever Omarchy or your own config binds them to. If you added the
+menu row, delete the `trigger.toggle.window-battles` line from
+`~/.config/omarchy/extensions/omarchy-menu.jsonc` too.
+
+Then remove the plugin. That unloads it from the shell and stops the daemon
+with it:
+
+```bash
+omarchy plugin remove dev.cstav.omarchy.plugin.hyprbattles
+```
+
+If `dev.cstav.omarchy.plugin.hyprbattles` is still listed under `bar.layout`
+in `~/.config/omarchy/shell.json`, delete that entry.
+
+That leaves only what it recorded. To forget every creature and meal as well:
+
+```bash
+rm -f ~/.local/state/hyprscroll2d/{battles-disabled,battles-assets,pantry.json,creatures.json}
+rm -rf ~/.config/omarchy/hyprbattles    # only if you added your own music
+```
+
+Remove those four files by name rather than the whole folder: Demon Slayer's
+Hyprscroll2D keeps its own settings in `~/.local/state/hyprscroll2d/` too.
+
 ## What it adds
 
 | Piece | What it is |
