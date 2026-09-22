@@ -61,6 +61,7 @@ no pad and no screen:
 | Records | `lib/creatures.py` | What a window class has earned, what one live window has eaten, window uptime and the agent running in a window off `/proc`, and the roster/feed the daemon and the CLI share. The only module here that writes anything but a ledger. |
 | Moves | `lib/window_moves.py` | Which command moves a window one cell per layout, and whether a move swapped two windows. **Zero I/O.** |
 | Runtime files | `lib/runtime.py` | Where the state file and the control socket go (`$XDG_RUNTIME_DIR`, or a private `0700` directory of the user's own - never `/tmp`), and how they are written: descriptor-relative, exclusive, no-follow, `0600`. |
+| Children | `lib/tools.py` + `Launcher.qml` | What the plugin may start, and how. The Python side finds each tool once in a fixed list of root's directories (never `$PATH`), refuses anything not root's or writable by others, and builds the one short environment every child gets. The QML side starts the daemon and the control script by the fixed interpreter with `-I`, `clearEnvironment: true`, and the same environment. |
 | Wiring | `bin/battles` (daemon) | Sockets, sound, pad lease, bar toggle, the roll, publishing the snapshot. |
 | Picture | `Battle.qml` + `BattleFighter/BattleStatusBox/BattleTypeChip/PixelText.qml` | Draws the snapshot and nothing else. Two scenes: `scene: "battle"` and `scene: "evolve"`. |
 | Panel | `Roster.qml` (bar widget) | The switch, one card per window, and the food. Reads `hyprbattles-ctl roster --json`, writes through `hyprbattles-ctl feed`. Cannot reach a window. Agent cards wear Omarchy's own marks (`shell/plugins/agents/assets/*.svg`, then the default-agent menu glyph), which is why the agent names are Omarchy's names. |
@@ -190,6 +191,17 @@ Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
   string, list and object it parses to `MAX_STRING`/`MAX_ITEMS`/`MAX_DEPTH`
   before anything is published; nothing else may read the command socket
   (`WhatTheCompositorSays`).
+- **Nothing the plugin runs is found on `$PATH`, and nothing inherits the
+  session.** `bin/battles` and `bin/hyprbattles-ctl` name their interpreter
+  (`#!/usr/bin/python3 -I`); the shell starts both through `Launcher.qml`
+  with `clearEnvironment: true` and a fixed environment; the daemon finds
+  `mpv`, `pw-play`, `pkill`, `omarchy-toggle-bar`, `notify-send` and the
+  rest through `tools.find` only - root's directories, regular, executable,
+  writable by root alone - and hands every child `tools.environment()`. A
+  missing tool costs its sound or its notification, never the battle. No
+  `sh` anywhere: the fallback player loops in Python (`LOOP`). The QML and
+  Python lists of passed variables are kept equal by a test
+  (`NothingAmbient`).
 - **No agent-control file ships.** No `CLAUDE.md`, `AGENTS.md`, `.claude/`
   or the like at the root; this guide is under `docs/` so that nothing an
   agent loads on its own is part of the plugin (`NothingAnAgentObeys`).

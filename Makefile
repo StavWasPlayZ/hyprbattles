@@ -8,7 +8,7 @@ check: test
 	python3 -m py_compile bin/import-battle-theme
 	python3 -m py_compile lib/battle_rules.py lib/battle_assets.py
 	python3 -m py_compile lib/hyprland.py lib/window_moves.py lib/pantry.py
-	python3 -m py_compile lib/creatures.py lib/runtime.py
+	python3 -m py_compile lib/creatures.py lib/runtime.py lib/tools.py
 	python3 -m json.tool manifest.json >/dev/null
 	test -f Service.qml
 	test -f Battle.qml
@@ -17,6 +17,7 @@ check: test
 	test -f BattleStatusBox.qml
 	test -f BattleTypeChip.qml
 	test -f Roster.qml
+	test -f Launcher.qml
 	test -f hyprbattles.lua
 	@if command -v luac >/dev/null 2>&1; then luac -p hyprbattles.lua; fi
 	test -f assets/battle-theme.wav

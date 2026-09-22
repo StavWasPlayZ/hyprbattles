@@ -1,6 +1,12 @@
 // Runs the battles daemon (bin/battles) for as long as this plugin is
 // enabled, and puts the battle screen up (Battle.qml). The bar widget is a
-// separate entry point, BattlesToggle.qml.
+// separate entry point, Roster.qml.
+//
+// The daemon is started by a fixed interpreter with the shell's environment
+// cleared - Launcher.qml says which few variables it gets - because it runs
+// from the moment the plugin is enabled without anybody asking, and what it
+// runs must not depend on what was first on the session's $PATH or on a
+// loader variable somebody managed to set.
 //
 // The daemon is a plain Python process, not QML: it listens on Hyprland's
 // event socket for the gamepad plugin's collision report, rolls the odds,
@@ -23,10 +29,14 @@ Item {
     // and does nothing at all otherwise.
     Battle {}
 
+    Launcher { id: launcher }
+
     Process {
         id: daemon
 
-        command: [root.daemonPath]
+        command: launcher.command(root.daemonPath, [])
+        clearEnvironment: true
+        environment: launcher.environment
         running: true
 
         onExited: function(exitCode) {

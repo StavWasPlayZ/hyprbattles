@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3 -I
 """Ask the window-battles daemon what it is doing, or tell it what to do.
 
     hyprbattles-ctl                 # the battle on screen as JSON, or inactive

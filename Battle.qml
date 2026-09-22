@@ -113,12 +113,16 @@ Item {
         root.state = parsed || ({})
     }
 
+    // Every key goes out through the control script, started the way the
+    // daemon is: fixed interpreter, cleared environment (Launcher.qml).
+    Launcher { id: launcher }
+
     function send(argument) {
-        Quickshell.execDetached([root.controlCommand, argument])
+        launcher.detach(root.controlCommand, [argument])
     }
 
     function send2(argument, value) {
-        Quickshell.execDetached([root.controlCommand, argument, value])
+        launcher.detach(root.controlCommand, [argument, value])
     }
 
     // Keyboard to battle control. Returns "" for anything the battle does not

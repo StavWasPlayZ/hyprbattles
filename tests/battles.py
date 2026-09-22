@@ -3665,6 +3665,8 @@ class GeneratedAudio(unittest.TestCase):
 
 import runtime                                                # noqa: E402
 import stat                                                   # noqa: E402
+import subprocess                                             # noqa: E402
+import tools                                                  # noqa: E402
 
 import hyprland                                               # noqa: E402
 
@@ -3976,6 +3978,192 @@ class NothingAnAgentObeys(unittest.TestCase):
             self.assertIn("docs/DEVELOPING.md", handle.read())
         with open(guide) as handle:
             self.assertNotIn("guidance to Claude Code", handle.read())
+
+
+class NothingAmbient(unittest.TestCase):
+    """What the plugin runs is fixed, not found. The shell starts the daemon
+    and the control script by a fixed interpreter with its environment
+    cleared, the daemon finds every program it starts in root's directories
+    and never on $PATH, and every child gets the same short environment. A
+    program planted earlier on the path, or a loader or interpreter variable
+    in the session, must change nothing about what runs when the plugin is
+    enabled or a battle is on.
+    """
+
+    def setUp(self):
+        tools.forget()
+        self.saved_env = dict(os.environ)
+        self.directory = tempfile.mkdtemp()
+
+    def tearDown(self):
+        tools.forget()
+        os.environ.clear()
+        os.environ.update(self.saved_env)
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    @staticmethod
+    def source(*parts):
+        with open(os.path.join(ROOT, *parts)) as handle:
+            return handle.read()
+
+    def test_the_two_programs_name_their_interpreter(self):
+        for name in ("battles", "hyprbattles-ctl"):
+            first = self.source("bin", name).splitlines()[0]
+            self.assertEqual(first, "#!%s -I" % tools.PYTHON, name)
+
+    def test_the_shell_starts_the_daemon_clean(self):
+        qml = self.source("Service.qml")
+        self.assertIn("clearEnvironment: true", qml)
+        self.assertIn("environment: launcher.environment", qml)
+        self.assertIn("launcher.command(root.daemonPath", qml)
+        self.assertNotIn("command: [root.daemonPath]", qml)
+
+    def test_the_panel_starts_the_control_script_clean(self):
+        qml = self.source("Roster.qml")
+        processes = qml.count("Process {")
+        self.assertGreater(processes, 0)
+        self.assertEqual(qml.count("clearEnvironment: true"), processes)
+        self.assertEqual(qml.count("environment: launcher.environment"),
+                         processes)
+        self.assertNotIn("[root.controlCommand", qml)
+
+    def test_the_screen_starts_the_control_script_clean(self):
+        qml = self.source("Battle.qml")
+        self.assertNotIn("execDetached([", qml)
+        self.assertIn("launcher.detach(root.controlCommand", qml)
+
+    def test_the_shell_and_the_daemon_agree_on_what_a_child_gets(self):
+        qml = self.source("Launcher.qml")
+        python = re.search(r'python: \["([^"]+)", "-I"\]', qml)
+        self.assertIsNotNone(python)
+        self.assertEqual(python.group(1), tools.PYTHON)
+        path = re.search(r'path: "([^"]+)"', qml)
+        self.assertEqual(path.group(1), tools.PATH)
+        block = re.search(r"passed: \[(.*?)\]", qml, re.S).group(1)
+        self.assertEqual(tuple(re.findall(r'"([A-Z_]+)"', block)),
+                         tools.PASSED)
+        self.assertIn("clearEnvironment: true", qml)
+
+    def test_nothing_that_changes_how_a_program_loads_is_passed(self):
+        for name in tools.PASSED:
+            self.assertFalse(name.startswith(("LD_", "PYTHON")), name)
+            self.assertNotEqual(name, "PATH")
+        self.assertTrue(tools.PATH.split(":"))
+        for directory in tools.PATH.split(":"):
+            self.assertTrue(directory.startswith("/"), directory)
+            self.assertNotIn(os.path.expanduser("~"), directory)
+
+    def test_a_child_s_environment_is_the_short_list(self):
+        source = {"HOME": "/home/x", "XDG_RUNTIME_DIR": "/run/user/7",
+                  "LD_PRELOAD": "/tmp/evil.so", "PYTHONPATH": "/tmp/evil",
+                  "PATH": "/tmp/evil:/usr/bin", "WAYLAND_DISPLAY": "",
+                  "SECRET": "yes"}
+        env = tools.environment(source)
+        self.assertEqual(env["PATH"], tools.PATH)
+        self.assertEqual(env["HOME"], "/home/x")
+        self.assertEqual(env["XDG_RUNTIME_DIR"], "/run/user/7")
+        for name in ("LD_PRELOAD", "PYTHONPATH", "SECRET", "WAYLAND_DISPLAY"):
+            self.assertNotIn(name, env)
+        self.assertLessEqual(set(env), {"PATH"} | set(tools.PASSED))
+
+    def test_what_may_run_is_root_s_and_nobody_else_s_to_write(self):
+        def info(mode, uid=0):
+            return os.stat_result((mode, 1, 1, 1, uid, 0, 10, 0, 0, 0))
+        regular = stat.S_IFREG
+        self.assertTrue(tools.trusted(info(regular | 0o755)))
+        self.assertFalse(tools.trusted(info(regular | 0o775)))
+        self.assertFalse(tools.trusted(info(regular | 0o757)))
+        self.assertFalse(tools.trusted(info(regular | 0o644)))
+        self.assertFalse(tools.trusted(info(regular | 0o755, uid=1000)))
+        self.assertFalse(tools.trusted(info(stat.S_IFDIR | 0o755)))
+        self.assertFalse(tools.trusted(info(stat.S_IFLNK | 0o777)))
+
+    def test_a_program_earlier_on_the_path_is_never_found(self):
+        planted = os.path.join(self.directory, "mpv")
+        with open(planted, "w") as handle:
+            handle.write("#!/bin/sh\nexit 0\n")
+        os.chmod(planted, 0o777)
+        os.environ["PATH"] = self.directory + ":" + os.environ.get("PATH", "")
+        self.assertEqual(shutil.which("mpv"), planted)
+        found = tools.find("mpv")
+        self.assertNotEqual(found, planted)
+        if found is not None:
+            self.assertTrue(os.path.isabs(found))
+            self.assertIn(os.path.dirname(found), tools.DIRECTORIES)
+        # Nor is it found when its directory is the one looked in: it is
+        # not root's, and anybody may write it.
+        tools.forget()
+        self.assertIsNone(tools.find("mpv", directories=(self.directory,)))
+
+    def test_a_tool_is_looked_up_once(self):
+        calls = []
+        real = tools.os.stat
+
+        def counting(path, *args, **kwargs):
+            calls.append(path)
+            return real(path, *args, **kwargs)
+
+        tools.os.stat = counting
+        try:
+            first = tools.find("pkill")
+            second = tools.find("pkill")
+        finally:
+            tools.os.stat = real
+        self.assertEqual(first, second)
+        self.assertLessEqual(len(calls), len(tools.DIRECTORIES))
+
+    def test_the_daemon_finds_nothing_by_itself(self):
+        source = self.source("bin", "battles")
+        self.assertNotIn("shutil.which", source)
+        self.assertNotIn('"sh"', source)
+        for name in ("mpv", "pw-play", "paplay", "aplay", "pkill",
+                     "notify-send", "omarchy-toggle-bar", "python3"):
+            for match in re.finditer(r'"%s"' % re.escape(name), source):
+                before = source[max(0, match.start() - 60):match.start()]
+                self.assertTrue("tools.find(" in before
+                                or "for name in (" in before,
+                                (name, before))
+
+    def test_every_child_of_the_daemon_gets_the_short_environment(self):
+        source = self.source("bin", "battles")
+        starts = [match.end() for match in
+                  re.finditer(r"subprocess\.(Popen|run)\(", source)]
+        self.assertGreaterEqual(len(starts), 4)
+        for start in starts:
+            self.assertIn("env=tools.environment()", source[start:start + 400])
+
+    def test_a_player_is_an_absolute_path_and_never_a_shell(self):
+        tools._found.update({"mpv": None, "pw-play": "/usr/bin/pw-play",
+                             "python3": "/usr/bin/python3"})
+        once = bd.Sound.command("/x/battle-hit.wav", loop=False)
+        self.assertEqual(once, ["/usr/bin/pw-play", "/x/battle-hit.wav"])
+        looped = bd.Sound.command("/x/battle-theme.wav", loop=True)
+        self.assertEqual(looped[:3], ["/usr/bin/python3", "-I", "-c"])
+        self.assertEqual(looped[-2:], ["/usr/bin/pw-play", "/x/battle-theme.wav"])
+        self.assertNotIn("sh", looped)
+        tools._found.update({"mpv": "/usr/bin/mpv"})
+        with_mpv = bd.Sound.command("/x/battle-theme.wav", loop=True)
+        self.assertEqual(with_mpv[0], "/usr/bin/mpv")
+        self.assertIn("--loop=inf", with_mpv)
+
+    def test_the_loop_stops_when_the_player_fails(self):
+        failing = tools.find("false")
+        if not failing:
+            self.skipTest("no /usr/bin/false")
+        completed = subprocess.run(
+            [sys.executable, "-I", "-c", bd.LOOP, failing],
+            env=tools.environment(), timeout=10)
+        self.assertEqual(completed.returncode, 0)
+
+    def test_a_missing_tool_is_quiet_not_fatal(self):
+        tools._found.update({"omarchy-toggle-bar": None, "notify-send": None,
+                             "pkill": None})
+        daemon = bd.Daemon()
+        daemon.set_bar(False)
+        daemon.notify("x", "y")
+        daemon.sound.sweep()
+        self.assertEqual(daemon._bar_toggles, [])
+        self.assertEqual(daemon._notifiers, [])
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3 -I
 """Run window battles: spot a window colliding with another, roll, fight.
 
 This daemon owns the whole feature. It waits for one window to be thrown into
@@ -31,7 +31,6 @@ import json
 import os
 import random
 import selectors
-import shutil
 import signal
 import socket
 import subprocess
@@ -46,6 +45,7 @@ import creatures                                           # noqa: E402
 import hyprland                                            # noqa: E402
 import pantry                                              # noqa: E402
 import runtime                                             # noqa: E402
+import tools                                               # noqa: E402
 import window_moves as moves                               # noqa: E402
 
 PR_SET_PDEATHSIG = 1
@@ -119,6 +119,14 @@ def log(message):
 
 # -------------------------------------------------------------------- sound
 
+# What loops a player that cannot loop by itself: run it again until it
+# fails, so a deleted file cannot spin forever. It used to be a line of
+# shell; it is Python now, run by the same fixed interpreter the daemon is,
+# because the daemon starts nothing that takes its orders from $PATH or the
+# environment - see lib/tools.py.
+LOOP = "import subprocess, sys\nwhile subprocess.call(sys.argv[1:]) == 0:\n    pass\n"
+
+
 class Sound:
     """One audio channel: plays a file, and stops it again.
 
@@ -146,21 +154,27 @@ class Sound:
 
     @staticmethod
     def command(path, loop):
-        """The first available player, as an argv, or None."""
-        if shutil.which("mpv"):
-            argv = ["mpv", "--no-video", "--no-terminal", "--really-quiet",
+        """The first available player, as an argv, or None.
+
+        Players are found by lib/tools.py in a fixed list of root's
+        directories, never on $PATH, and every argv here starts with an
+        absolute path to one.
+        """
+        mpv = tools.find("mpv")
+        if mpv:
+            argv = [mpv, "--no-video", "--no-terminal", "--really-quiet",
                     "--volume=55"]
             if loop:
                 argv.append("--loop=inf")
             return argv + [path]
         for name in ("pw-play", "paplay", "aplay"):
-            if shutil.which(name):
-                if not loop:
-                    return [name, path]
-                # None of these loop on their own: re-run it, and stop on the
-                # first failure so a deleted file cannot spin a shell forever.
-                return ["sh", "-c", 'while "$1" "$2"; do :; done', "sh",
-                        name, path]
+            player = tools.find(name)
+            if player:
+                python = tools.find("python3")
+                if not loop or not python:
+                    return [player, path]
+                # None of these loop on their own; LOOP re-runs it.
+                return [python, "-I", "-c", LOOP, player, path]
         return None
 
     def play(self, name, loop=False):
@@ -178,6 +192,7 @@ class Sound:
             # over a desktop with no battle on it.
             self.process = subprocess.Popen(
                 argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env=tools.environment(),
                 start_new_session=True, preexec_fn=die_with_parent)
         except OSError as error:
             log("cannot play %s: %s" % (name, error))
@@ -191,12 +206,16 @@ class Sound:
         we started - both of them, because the file a player was given may
         have come from either.
         """
+        pkill = tools.find("pkill")
+        if not pkill:
+            return
         try:
             for directory in (self.assets, self.custom):
-                subprocess.run(["pkill", "-f",
+                subprocess.run([pkill, "-f",
                                 os.path.join(directory, "battle-")],
                                stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL, timeout=2)
+                               stderr=subprocess.DEVNULL,
+                               env=tools.environment(), timeout=2)
         except (OSError, subprocess.SubprocessError):
             pass
 
@@ -662,11 +681,15 @@ class Daemon:
         # reaps the finished without ever blocking.
         self._bar_toggles = [child for child in self._bar_toggles
                              if child.poll() is None]
+        toggle = tools.find("omarchy-toggle-bar")
+        if not toggle:
+            log("no omarchy-toggle-bar; the bar stays where it is")
+            return
         try:
             self._bar_toggles.append(subprocess.Popen(
-                ["omarchy-toggle-bar", "off" if visible else "on"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, start_new_session=True))
+                [toggle, "off" if visible else "on"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env=tools.environment(), start_new_session=True))
         except OSError as error:
             log("cannot toggle the bar: %s" % error)
 
@@ -682,12 +705,15 @@ class Daemon:
         """
         self._notifiers = [child for child in self._notifiers
                            if child.poll() is None]
+        notifier = tools.find("notify-send")
+        if not notifier:
+            return
         try:
             self._notifiers.append(subprocess.Popen(
-                ["notify-send", "-a", "Window Battles",
+                [notifier, "-a", "Window Battles",
                  "-i", "input-gaming", summary, body],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, start_new_session=True))
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env=tools.environment(), start_new_session=True))
         except OSError as error:
             log("cannot send a notification: %s" % error)
 

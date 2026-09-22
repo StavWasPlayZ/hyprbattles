@@ -44,6 +44,10 @@ Panel {
     readonly property string controlCommand: decodeURIComponent(
         Qt.resolvedUrl("bin/hyprbattles-ctl").toString().replace(/^file:\/\//, ""))
 
+    // Everything below runs the control script the way the daemon is run:
+    // fixed interpreter, the shell's environment cleared (Launcher.qml).
+    Launcher { id: launcher }
+
     readonly property color foreground: bar ? bar.foreground : Color.foreground
     readonly property color dim: Qt.darker(foreground, 1.55)
     readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -322,9 +326,9 @@ Panel {
 
     function teach(id) {
         if (!chosen || root.slot < 0 || teachProcess.running) return
-        teachProcess.command = [root.controlCommand, "teach",
-                                String(chosen.address), String(root.slot),
-                                String(id), "--json"]
+        teachProcess.command = launcher.command(root.controlCommand,
+            ["teach", String(chosen.address), String(root.slot),
+             String(id), "--json"])
         teachProcess.running = true
     }
 
@@ -417,7 +421,9 @@ Panel {
 
     Process {
         id: rosterProcess
-        command: [root.controlCommand, "roster", "--json"]
+        command: launcher.command(root.controlCommand, ["roster", "--json"])
+        clearEnvironment: true
+        environment: launcher.environment
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: root.apply(text)
@@ -427,6 +433,8 @@ Panel {
 
     Process {
         id: feedProcess
+        clearEnvironment: true
+        environment: launcher.environment
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: root.applyFeed(text)
@@ -436,6 +444,8 @@ Panel {
 
     Process {
         id: teachProcess
+        clearEnvironment: true
+        environment: launcher.environment
         stdout: StdioCollector {
             waitForEnd: true
             onStreamFinished: root.applyTeach(text)
@@ -445,7 +455,9 @@ Panel {
 
     Process {
         id: switchProcess
-        command: [root.controlCommand, "toggle"]
+        command: launcher.command(root.controlCommand, ["toggle"])
+        clearEnvironment: true
+        environment: launcher.environment
         onExited: root.refresh()
     }
 
@@ -504,9 +516,8 @@ Panel {
 
     function feed(shelfKey) {
         if (!chosen || feedProcess.running) return
-        feedProcess.command = [root.controlCommand, "feed",
-                               String(chosen.address), String(shelfKey),
-                               "--json"]
+        feedProcess.command = launcher.command(root.controlCommand,
+            ["feed", String(chosen.address), String(shelfKey), "--json"])
         feedProcess.running = true
     }
 

@@ -502,6 +502,15 @@ uses - so nothing would ever play a "PP restore", and there is no such file.
 The player is the first of `mpv`, `pw-play`, `paplay` and `aplay` that is
 installed. With none of them, battles are silent rather than refused.
 
+"Installed" means in `/usr/local/bin`, `/usr/bin` or `/bin`, owned by root
+and writable by nobody else. The daemon never looks on `$PATH` for a player,
+or for `pkill`, `notify-send` or `omarchy-toggle-bar`, and it starts every
+one of them with a fixed, short environment rather than its own - a program
+that runs by itself every time the plugin is enabled must not take orders
+from whatever the session happened to be handed. The shell starts the daemon
+the same way: a fixed `python3`, environment cleared. See `lib/tools.py` and
+`Launcher.qml`.
+
 ## Looking at it
 
 The screen is [`Battle.qml`](../Battle.qml), and it only draws - every rule

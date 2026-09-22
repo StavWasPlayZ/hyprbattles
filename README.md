@@ -45,7 +45,8 @@ where you wanted it, which is also the worst outcome of not having a battle.
 
 ## What it needs
 
-Hyprland and Python 3. That is the list.
+Hyprland and Python 3 at `/usr/bin/python3`, which is where Omarchy has it.
+That is the list.
 
 **Any layout works.** The plugin makes the move itself and reads the swap back
 out of Hyprland's own window list, so dwindle, master and a scrolling layout
