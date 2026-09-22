@@ -988,28 +988,67 @@ Panel {
                     }
                 }
 
-                Text {
-                    textFormat: Text.PlainText
+                // The level, the uptime, the experience and - on the ranked
+                // list - the record. One sentence, but three Texts: the
+                // experience lights up on its own the moment a meal would
+                // evolve the creature, and a PlainText cannot colour a word
+                // of itself. Markup could, and is exactly what every Text
+                // here refuses to be.
+                Row {
                     width: parent.width
-                    elide: Text.ElideRight
-                    text: "LV " + Number(creature.row.level || 0)
-                          + (creature.row.sleeping
-                             ? "   last up " + root.ago(creature.row.seen)
-                             : "   up " + root.shortTime(creature.row.uptime))
-                          + (Number(creature.row.xpNeeded || 0) > 0
-                             ? "   " + Number(creature.row.xpInto || 0)
-                               + "/" + Number(creature.row.xpNeeded) + " XP"
-                             : "   MAX")
-                          // The ranked list shows what it is ranked by: the
-                          // record sits next to the experience it breaks
-                          // ties with, and the other way round.
-                          + (root.view === "best" && creature.interactive
-                             ? "   " + Number(creature.row.wins || 0) + "W "
-                               + Number(creature.row.losses || 0) + "L"
-                             : "")
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
+
+                    Text {
+                        textFormat: Text.PlainText
+                        // The line gives way here rather than at its end.
+                        // What somebody reads on a card that is one meal
+                        // from evolving is the experience, so a panel too
+                        // narrow for all of it loses the uptime instead.
+                        width: Math.max(0, parent.width - experience.width
+                                           - record.width)
+                        elide: Text.ElideRight
+                        text: "LV " + Number(creature.row.level || 0)
+                              + (creature.row.sleeping
+                                 ? "   last up " + root.ago(creature.row.seen)
+                                 : "   up " + root.shortTime(creature.row.uptime))
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                    }
+
+                    Text {
+                        textFormat: Text.PlainText
+                        id: experience
+                        // Lit in the creature's own colour exactly when the
+                        // line below reads "One meal from evolving", and in
+                        // that same colour: the two are one fact said twice -
+                        // how much is left, and how little that is - and a
+                        // card whose appetite line was lit while its
+                        // experience stayed grey read as two different
+                        // creatures' news.
+                        text: Number(creature.row.xpNeeded || 0) > 0
+                            ? "   " + Number(creature.row.xpInto || 0)
+                              + "/" + Number(creature.row.xpNeeded) + " XP"
+                            : "   MAX"
+                        color: creature.row.canEvolveNow ? creature.tint
+                                                         : root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                    }
+
+                    Text {
+                        textFormat: Text.PlainText
+                        id: record
+                        // The ranked list shows what it is ranked by: the
+                        // record sits next to the experience it breaks
+                        // ties with, and the other way round.
+                        text: root.view === "best" && creature.interactive
+                            ? "   " + Number(creature.row.wins || 0) + "W "
+                              + Number(creature.row.losses || 0) + "L"
+                            : ""
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                    }
                 }
 
                 // How much of its appetite it has eaten. It
