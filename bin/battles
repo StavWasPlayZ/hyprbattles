@@ -502,12 +502,17 @@ class Daemon:
                 return client
         return None
 
-    def monitor_name(self, client):
-        """The monitor a window is on, by name, so the overlay can pick a
-        screen. Hyprland reports it as an id in `clients`."""
+    def monitor_name(self, client=None, named=""):
+        """The monitor to draw on, by name, so the overlay can pick a screen:
+        the one `named`, when Hyprland has one by that name, else the one a
+        window is on (Hyprland reports that as an id in `clients`), else the
+        focused one."""
         monitors = self.hypr.query("monitors") or []
         for monitor in monitors:
-            if monitor.get("id") == client.get("monitor"):
+            if named and str(monitor.get("name") or "") == named:
+                return named
+        for monitor in monitors:
+            if client and monitor.get("id") == client.get("monitor"):
                 return str(monitor.get("name") or "")
         for monitor in monitors:
             if monitor.get("focused"):
@@ -636,16 +641,23 @@ class Daemon:
         # way - it simply does not get the animation.
         if evolutions:
             window, evolved = evolutions[0]
-            self.evolve(window, evolved, now)
+            self.evolve(evolved, now, window=window)
 
-    def evolve(self, window, evolved, now):
+    def evolve(self, evolved, now, window=None, named=""):
         """Put an evolution on screen. Never fatal, and never a battle: it
-        holds nothing, moves nothing and can be walked away from."""
+        holds nothing, moves nothing and can be walked away from.
+
+        It goes where whoever caused it is looking. After a fight that is the
+        challenger's screen, where the fight was. After a meal it is the
+        screen the panel was open on (`named`), else the focused one - never
+        the fed window's, which can be on any monitor, or on none at all once
+        it has shut, and a picture on another desk is a picture missed."""
         if self.battle:
             return
         try:
-            self.scene = rules.Evolution(evolved, evolved["stage"], now,
-                                         monitor=self.monitor_name(window))
+            self.scene = rules.Evolution(
+                evolved, evolved["stage"], now,
+                monitor=self.monitor_name(window, named))
         except Exception as error:
             log("evolution could not be shown: %s" % error)
             self.scene = None
@@ -935,10 +947,11 @@ class Daemon:
             return
         self.census([{"initialClass": name, "class": name}])
 
-    def feed(self, address, shelf_key, now):
+    def feed(self, address, shelf_key, now, monitor=""):
         """Feed one window from the panel. The one thing in this daemon that
         changes a creature without a fight - and still nothing that changes a
-        window."""
+        window. `monitor` is the screen the meal was given from, which is
+        where an evolution it buys is shown."""
         try:
             self.creatures.load()
             clients = self.hypr.query("clients") or []
@@ -959,7 +972,7 @@ class Daemon:
         if result.get("leveled"):
             self.effects.play("battle-levelup.wav")
         if result.get("evolved"):
-            self.evolve(window, result["creature"], now)
+            self.evolve(result["creature"], now, named=monitor)
         return result
 
     def teach(self, address, slot, move):
@@ -1001,7 +1014,8 @@ class Daemon:
                     "enabled": self.enabled(), "pantry": self.shelves()}
         elif verb == "feed":
             return self.feed(parts[1] if len(parts) > 1 else "",
-                             parts[2] if len(parts) > 2 else "", now)
+                             parts[2] if len(parts) > 2 else "", now,
+                             parts[3] if len(parts) > 3 else "")
         elif verb == "teach":
             return self.teach(parts[1] if len(parts) > 1 else "",
                               parts[2] if len(parts) > 2 else "",

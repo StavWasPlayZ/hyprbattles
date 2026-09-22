@@ -252,8 +252,10 @@ Item {
             required property var modelData
             screen: modelData
 
-            // One screen only: the one the challenger is on. With no monitor
-            // named, fall back to the focused one rather than every screen.
+            // One screen only: the one the daemon named - the challenger's
+            // for a battle, the panel's for an evolution a meal bought. With
+            // no monitor named, fall back to the focused one rather than
+            // every screen.
             readonly property var focusedMonitor: Hyprland.focusedMonitor
             readonly property bool mine: root.monitor !== ""
                 ? root.monitor === String(modelData.name)
