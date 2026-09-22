@@ -49,6 +49,7 @@ where you wanted it, which is also the worst outcome of not having a battle.
 | --- | --- |
 | [`bin/battles`](bin/battles) | The daemon: moves the window, spots the collision, rolls the odds, borrows the controller, runs the fight. |
 | [`bin/hyprbattles-ctl`](bin/hyprbattles-ctl) | Move a window, read the state, switch battles on or off, or force one, from anywhere. |
+| [`hyprbattles.lua`](hyprbattles.lua) | Binds the move to your keys in a Lua-configured Hyprland. |
 | [`lib/window_moves.py`](lib/window_moves.py) | Which command moves a window one cell, per layout, and how to tell a swap from a step into an empty cell. |
 | [`lib/battle_rules.py`](lib/battle_rules.py) | The rules: creatures, types, damage, the turn loop. No I/O in it at all. |
 | [`lib/pantry.py`](lib/pantry.py) | The food: read-only readings of free memory, cache, swap, entropy, idle cycles and zombies, and the ledger that keeps them honest. |
@@ -109,29 +110,36 @@ rolls for a battle when that move lands on somebody.
 move you actually press, not to add a second one beside it - so change the
 modifiers and keys below to match your own bindings. `hyprctl binds` lists what is on which key now.
 
-For **Omarchy's default, `SUPER + SHIFT + arrows`**, those keys are
-bound to *Swap window* out of the box
-(`/usr/share/omarchy/default/hypr/bindings/tiling.lua`); this takes them over:
+The plugin ships a small Lua helper, [`hyprbattles.lua`](hyprbattles.lua),
+that does it in two lines. For **Omarchy's default, `SUPER + SHIFT + arrows`**
+(bound to *Swap window* out of the box, in
+`/usr/share/omarchy/default/hypr/bindings/tiling.lua`):
 
 ```lua
 -- ~/.config/hypr/bindings.lua
-local battles = os.getenv("HOME")
-  .. "/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/hyprbattles-ctl"
-for _, d in ipairs({ { "LEFT", "left" }, { "DOWN", "down" }, { "UP", "up" }, { "RIGHT", "right" } }) do
-  hl.unbind("SUPER + SHIFT + " .. d[1]) -- was: Swap window <dir>
-  o.bind("SUPER + SHIFT + " .. d[1], "Window: Move " .. d[2],
-    battles .. " move " .. d[2])
-end
+local battles = dofile(os.getenv("HOME")
+  .. "/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/hyprbattles.lua")
+battles.bind("SUPER + SHIFT", { "LEFT", "DOWN", "UP", "RIGHT" })
 ```
 
-If something else already sits on the keys you pick, `hl.unbind` it first.
-The bind replaces whatever move dispatcher was on those keys and keeps doing
-that job: the window moves whether battles are switched on or off, whether the
-roll comes up or not, and whether or not the daemon is even running - with the
-shell down, `hyprbattles-ctl move` makes Hyprland's move itself.
+The keys go in left, down, up, right order - h, j, k, l - so vim keys are
+`{ "H", "J", "K", "L" }`. Whatever was on those keys is unbound first, and the
+move takes over its job: the window moves whether battles are switched on or
+off, whether the roll comes up or not, and whether or not the daemon is even
+running - with the shell down, `hyprbattles-ctl move` makes Hyprland's move
+itself. For a one-off bind of your own, `battles.move("left")` is the shell
+command for one direction.
 
-`hl.unbind` matches the bind string literally, modifier order
-included, so spell it exactly as the bind you are replacing does.
+The helper unbinds by the exact string it binds, and `hl.unbind` matches
+literally, modifier order included - so spell the modifiers the way the bind
+you are replacing does (`hyprctl binds` shows it). On a classic
+`hyprland.conf` the same thing is one line per key:
+
+```ini
+unbind = SUPER SHIFT, left
+bind = SUPER SHIFT, left, exec, ~/.config/omarchy/plugins/dev.cstav.omarchy.plugin.hyprbattles/bin/hyprbattles-ctl move left
+# ...and likewise right/up/down
+```
 
 > [!NOTE]
 > On **Demon Slayer's Hyprscroll2D** you can skip this entirely; that layout

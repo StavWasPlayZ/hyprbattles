@@ -17,6 +17,8 @@ check: test
 	test -f BattleStatusBox.qml
 	test -f BattleTypeChip.qml
 	test -f Roster.qml
+	test -f hyprbattles.lua
+	@if command -v luac >/dev/null 2>&1; then luac -p hyprbattles.lua; fi
 	test -f assets/battle-theme.wav
 	test -f assets/battle-select.wav
 	test -f assets/battle-hit.wav

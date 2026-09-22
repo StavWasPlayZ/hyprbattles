@@ -1146,6 +1146,44 @@ class WithoutTheLayoutPlugin(unittest.TestCase):
         self.assertIs(ctl.moves, moves)
 
 
+class TheLuaHelper(unittest.TestCase):
+    """hyprbattles.lua binds the move for a Lua-configured Hyprland. It is run
+    inside the compositor, so it may bind the move verb and nothing else."""
+
+    PATH = os.path.join(ROOT, "hyprbattles.lua")
+
+    def test_it_binds_the_move_and_dispatches_nothing(self):
+        with open(self.PATH) as handle:
+            code = "\n".join(line.split("--")[0] for line in handle)
+        self.assertNotIn("hl.dispatch", code)
+        self.assertEqual(set(re.findall(r"hl\.dsp\.[\w.]+", code)),
+                         {"hl.dsp.exec_cmd"})
+        self.assertIn('" move "', code)
+
+    @unittest.skipUnless(shutil.which("lua"), "no lua interpreter")
+    def test_four_keys_become_the_four_moves(self):
+        stub = (
+            'hl = { dsp = {} }\n'
+            'function hl.unbind(k) print("unbind|" .. k) end\n'
+            'function hl.dsp.exec_cmd(c) return c end\n'
+            'function hl.bind(k, d) print("bind|" .. k .. "|" .. d) end\n'
+            'local b = dofile(arg[1])\n'
+            'b.bind("SUPER + SHIFT", { "H", "J", "K", "L" })\n'
+            'print("short|" .. tostring(pcall(b.bind, "SUPER", { "H" })))\n')
+        import subprocess
+        out = subprocess.run(["lua", "-", self.PATH], input=stub, text=True,
+                             capture_output=True, check=True).stdout.split("\n")
+        binds = [line.split("|")[1:] for line in out if line.startswith("bind|")]
+        ctl = os.path.join(ROOT, "bin", "hyprbattles-ctl")
+        self.assertEqual(binds, [
+            ["SUPER + SHIFT + " + key, "'%s' move %s" % (ctl, direction)]
+            for key, direction in zip("HJKL", ("left", "down", "up", "right"))])
+        # Whatever was on a key is unbound before the move takes it over.
+        self.assertEqual(out.index("unbind|SUPER + SHIFT + H") + 1,
+                         out.index("bind|SUPER + SHIFT + H|'%s' move left" % ctl))
+        self.assertIn("short|false", out)
+
+
 class EncounterRumble(unittest.TestCase):
     """A battle opening should be felt, not just seen. The motors live in the
     gamepad plugin, so this is an ask over its socket rather than a write."""
