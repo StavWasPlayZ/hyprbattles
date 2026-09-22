@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "dev.cstav.omarchy.plugin.hyprbattles",
   "name": "Hyprland Pokemon Battles",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "stav",
   "license": "MIT",
   "description": "Throw a window at another window and settle it in a turn-based fight",
