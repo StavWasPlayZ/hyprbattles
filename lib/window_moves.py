@@ -38,6 +38,15 @@ OPPOSITES = {"left": "right", "right": "left", "up": "down", "down": "up"}
 # and master want.
 SCROLLING = ("hyprscroll2d", "scroller", "scrolling", "hyprscrolling")
 
+# The one layout that announces its own collisions, spelled exactly as it
+# names itself to Hyprland (`general:layout` reads `lua:hyprscroll2d`).
+# SCROLLING is a family and this is one member of it: wanting the layout
+# message is not the same thing as posting a collision, and the other three
+# names do the first without the second. Matched whole and never as a
+# substring, or the gamepad plugin - `...plugin.hyprscroll2d-gamepad-support`
+# - would answer to it, and that one announces nothing by itself.
+ANNOUNCES = "hyprscroll2d"
+
 
 def layout_name(option):
     """The layout out of a `getoption general:layout` reply.

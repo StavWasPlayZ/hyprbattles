@@ -71,6 +71,15 @@ GAMEPAD_SOCKET = os.path.join(
 # Presence of the flag means battles are off, matching the way the bar toggle
 # and the minimap remember themselves.
 DISABLED_FLAG = os.path.join(STATE_HOME, "hyprscroll2d", "battles-disabled")
+# Presence means a move has reached the plugin at least once, by either
+# trigger path, on this machine ever. Its absence is the one thing the panel
+# can say out loud that a fresh install needs to hear: battles wait on a move
+# key routed through `hyprbattles-ctl move`, and until one is there a window
+# shoved into another window does nothing at all. A file rather than a count
+# because the question is only ever "has this ever worked", and because the
+# CLI answers it with the daemon down - which is exactly when a keybind that
+# was never bound looks the same as one that was.
+REACHED_FLAG = os.path.join(STATE_HOME, "hyprscroll2d", "move-seen")
 # What has been eaten lately and has not grown back yet. See lib/pantry.py:
 # the food is a live reading of the machine, and this is the only thing that
 # stops the same 512 MiB being fed to a creature over and over.
@@ -406,6 +415,32 @@ class Daemon:
         value that a click could make stale."""
         return not os.path.exists(DISABLED_FLAG)
 
+    @staticmethod
+    def reached():
+        """Whether a move has ever reached the plugin on this machine.
+
+        A stat(), like enabled(), and read on the same terms: the panel asks
+        on every refresh and the answer is a file so that the CLI - which
+        runs with the shell down - can write it."""
+        return os.path.exists(REACHED_FLAG)
+
+    @staticmethod
+    def note_reached():
+        """Write that down, once and for good.
+
+        Only the first one costs anything: after that the file is there and
+        the existence check short-circuits, so this sits in the collision
+        path without being a write per collision. Nothing ever removes it -
+        a key that worked in March is proof enough in June, and a plugin
+        that forgot would start nagging somebody who had already done it."""
+        if os.path.exists(REACHED_FLAG):
+            return
+        try:
+            os.makedirs(os.path.dirname(REACHED_FLAG), exist_ok=True)
+            open(REACHED_FLAG, "w").close()
+        except OSError as error:
+            log("cannot write down that a move arrived: %s" % error)
+
     def set_enabled(self, wanted):
         try:
             if wanted:
@@ -435,6 +470,13 @@ class Daemon:
         parts = [part.strip() for part in payload.split(",")]
         if len(parts) < 2 or not parts[0] or not parts[1]:
             return
+        if source != "move":
+            # A layout or pad plugin announced this one, so the plugin is
+            # wired to something whatever the keys are bound to. move() marks
+            # its own path, and marks it on every move rather than only on a
+            # collision: a bound key that has not landed on anybody yet is
+            # still a bound key.
+            self.note_reached()
         key = tuple(parts[:3])
         if (self.last_collision == key
                 and now - self.last_collision_at < COLLISION_DEDUP):
@@ -476,6 +518,7 @@ class Daemon:
         direction = direction.strip().lower()
         if direction not in moves.DIRECTIONS:
             return False
+        self.note_reached()
         active = self.hypr.query("activewindow") or {}
         address = str(active.get("address") or "").lower()
         before = moves.placement(self.hypr.query("clients") or [])
@@ -1011,7 +1054,9 @@ class Daemon:
         elif verb == "roster":
             rows, asleep = self.roster()
             return {"roster": rows, "sleeping": asleep,
-                    "enabled": self.enabled(), "pantry": self.shelves()}
+                    "enabled": self.enabled(), "reached": self.reached(),
+                    "layoutAnnounces": self.layout() == moves.ANNOUNCES,
+                    "pantry": self.shelves()}
         elif verb == "feed":
             return self.feed(parts[1] if len(parts) > 1 else "",
                              parts[2] if len(parts) > 2 else "", now,

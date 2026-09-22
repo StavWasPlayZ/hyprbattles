@@ -282,7 +282,13 @@ for.
 Behind the icon are several views, because each is a panel's worth on its own:
 
 **The windows.** The switch first - it is what somebody opening the panel in a
-hurry came for - then a card per creature, hungriest first. Each card carries
+hurry came for - and under it, on a machine where no move has ever reached the
+plugin, the one line this panel ever asks of anybody: nothing is routed
+through `hyprbattles-ctl move`, so nothing can collide, and the README does it
+in two lines. It goes on the first move, by either trigger path, and does not
+come back, and it never appears at all on Demon Slayer's Hyprscroll2D, which
+announces its own collisions and so needs nothing bound. Then a card per
+creature, hungriest first. Each card carries
 the application's own icon, the type as its colour, the name, a `x2` when it
 has more than one window open, a star per evolution, the level, the record,
 how long its eldest window has been up, how far it is from the next level,

@@ -127,6 +127,11 @@ bind = SUPER SHIFT, left, exec, ~/.config/omarchy/plugins/dev.cstav.omarchy.plug
 > On **Demon Slayer's Hyprscroll2D** you can skip this entirely; that layout
 > posts its own collisions, so its own move keys already trigger battles.
 
+Until a move reaches the plugin one way or the other, the panel says so above
+the switch: nothing is bound, so nothing can collide, so nothing happens when
+you shove one window into another. The line goes on the first move and does
+not come back.
+
 ### Bar icon
 The switch, the roster and the food all live
 behind it:

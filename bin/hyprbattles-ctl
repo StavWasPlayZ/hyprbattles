@@ -106,6 +106,13 @@ STATE_HOME = runtime.STATE_HOME
 # row can read and flip it while the shell is restarting, or before the daemon
 # has ever run. The daemon reads the same file on every collision.
 DISABLED_FLAG = os.path.join(STATE_HOME, "hyprscroll2d", "battles-disabled")
+# Presence means a move key has reached the plugin at least once. This script
+# is the keybind, so this is where the fact is born: with the daemon up the
+# move is forwarded and the daemon marks it too, and with the daemon down
+# this is the only thing that runs - which is the case that matters, because
+# a key that was never bound and a shell that is restarting look identical
+# from the panel. The panel reads it to know whether to explain itself.
+REACHED_FLAG = os.path.join(STATE_HOME, "hyprscroll2d", "move-seen")
 
 COMMANDS = ("status", "enabled", "on", "off", "toggle", "cancel", "stop",
             "debug", "pantry", "roster", "sleeping", "feed", "moves", "teach",
@@ -164,6 +171,28 @@ def assets(argv):
 
 def enabled():
     return not os.path.exists(DISABLED_FLAG)
+
+
+def reached():
+    return os.path.exists(REACHED_FLAG)
+
+
+def note_reached():
+    """Write down that a move key found us, once and for good.
+
+    Cheap after the first: the file is there and this is a stat(). It is
+    never removed - somebody who bound a key in March has bound it, and a
+    plugin that forgot would start explaining itself to the one person who
+    does not need it. A failure here costs the hint and nothing else, so it
+    is swallowed: a move key that refused to move a window because a note
+    could not be written would be the worse bug by far."""
+    if os.path.exists(REACHED_FLAG):
+        return
+    try:
+        os.makedirs(os.path.dirname(REACHED_FLAG), exist_ok=True)
+        open(REACHED_FLAG, "w").close()
+    except OSError:
+        pass
 
 
 def set_enabled(wanted):
@@ -236,9 +265,12 @@ def local_roster():
     store = creatures.Store()
     clients = hypr.query("clients") or []
     store.touch(clients)
+    layout = moves.layout_name(hypr.query("getoption general:layout"))
     return {"roster": creatures.roster(clients, store, larder()),
             "sleeping": creatures.sleeping(clients, store),
-            "enabled": enabled(), "pantry": local_pantry()["pantry"]}
+            "enabled": enabled(), "reached": reached(),
+            "layoutAnnounces": layout == moves.ANNOUNCES,
+            "pantry": local_pantry()["pantry"]}
 
 
 def local_feed(address, shelf_key):
@@ -361,6 +393,12 @@ def main(argv):
             nudge()
         print("true" if enabled() else "false")
         return 0
+
+    # Before the daemon is asked anything, because this is the fact the panel
+    # needs and it is true whether or not there is a daemon to forward it to:
+    # something ran this script with a direction, so a move key found us.
+    if argument == "move":
+        note_reached()
 
     arguments = [word for word in argv[2:] if not word.startswith("--")]
     message = (" ".join([argument] + arguments)

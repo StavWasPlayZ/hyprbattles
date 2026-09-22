@@ -205,6 +205,24 @@ Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
 - **No agent-control file ships.** No `CLAUDE.md`, `AGENTS.md`, `.claude/`
   or the like at the root; this guide is under `docs/` so that nothing an
   agent loads on its own is part of the plugin (`NothingAnAgentObeys`).
+- **What a key is bound to cannot be read, so it is not guessed.** This
+  Hyprland is configured in Lua and `binds` reports every one of them as the
+  `__lua` dispatcher with a callback number for an argument - the command is
+  not in the answer, and matching on a bind's *description* would match
+  Omarchy's own "Move window left" too. So the panel's setup hint keys off
+  `move-seen` instead: `hyprbattles-ctl move` writes it (it is the keybind,
+  and it runs with the shell down, which is the case that matters) and the
+  daemon writes it for a collision announced by a layout or pad plugin, whose
+  owner never binds a key at all. It is written on the *move*, not on the
+  collision - a bound key that has not landed on anybody yet is still bound -
+  and nothing ever removes it (`TheFirstMoveKey`). The hint is also held back
+  on Demon Slayer's Hyprscroll2D, which posts its own collisions and so needs
+  nothing bound: `moves.ANNOUNCES` is that layout's exact name, matched whole
+  against `getoption general:layout` and never as a substring - the gamepad
+  plugin's id ends in `hyprscroll2d-gamepad-support` and announces nothing by
+  itself. It is read off the compositor rather than the disk, because looking
+  in `~/.config/omarchy/plugins` for a neighbour is the linking this plugin
+  does not do.
 - **The bar icon is never the urgent colour.** On is the bar's own colour, off
   is grey, and the red dot appears only when a creature is one meal on the
   shelves away from evolving - and never while battles are off.
@@ -215,6 +233,7 @@ Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
 ## State lives in files, not in the daemon
 
 `~/.local/state/hyprscroll2d/` holds `battles-disabled` (presence = off),
+`move-seen` (presence = a move has reached the plugin at least once, ever),
 `battles-assets` (the mode), `pantry.json` (the eaten-portions ledger) and
 `creatures.json` (what each class has earned, including the hours its windows
 have been open and everything it has eaten).
@@ -245,7 +264,10 @@ file by mode (`auto`/`generated`/`custom`), overridable for one run with
 
 - QML colours come from `qs.Commons` (`Color.*`) so battles read on any theme.
   The only hardcoded colours are the eight type colours and the HP bar's
-  green/amber/red, which must mean the same thing everywhere.
+  green/amber/red, which must mean the same thing everywhere. The panel
+  borrows all three: green and red for a record's wins and losses, and the
+  amber for the setup hint's box (`root.caution`) - the one thing on the
+  panel that asks something of you rather than reporting the machine.
 - Lettering is the original 5×7 font in `PixelText.qml`, drawn square by square
   on a Canvas — no font files.
 - `tests/battles.py` loads the extension-less `bin/battles` and `bin/hyprbattles-ctl`

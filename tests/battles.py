@@ -13,6 +13,7 @@ themselves, which need the gamepad plugin running and a pad plugged in.
 """
 
 import array
+import atexit
 import importlib.machinery
 import importlib.util
 import json
@@ -58,6 +59,15 @@ def load_daemon():
 
 
 bd = load_daemon()
+
+# Nothing in this suite may write in the real state directory, and two of the
+# daemon's paths now leave a note there the first time a move arrives. One
+# temporary directory for the whole run: a test that marked the developer's
+# own machine would quietly switch off the panel's hint for them, and that is
+# exactly the bug the hint exists to catch.
+_SCRATCH = tempfile.mkdtemp()
+bd.REACHED_FLAG = os.path.join(_SCRATCH, "move-seen")
+atexit.register(shutil.rmtree, _SCRATCH, ignore_errors=True)
 
 
 def window(address="0x1", klass="foot", size=(800, 600), pid=None):
@@ -1508,6 +1518,147 @@ class WithoutTheGamepadPlugin(unittest.TestCase):
         daemon = bd.Daemon.__new__(bd.Daemon)
         daemon.battle = object()
         daemon.on_key("banana", 0.0)    # must not raise
+
+
+class TheFirstMoveKey(unittest.TestCase):
+    """Whether a move has ever reached the plugin, and how that is known.
+
+    Battles trigger on a move made through `hyprbattles-ctl move`, so a fresh
+    install with nothing bound to it is a plugin that does nothing when you
+    shove one window into another - and looks broken rather than
+    unconfigured. It cannot be read off the compositor: a Lua-configured
+    Hyprland reports every bind as the dispatcher `__lua` with a callback
+    number for an argument, so what a key runs is not in the answer. What can
+    be known is whether a move ever arrived, by either trigger path, and that
+    is the question the panel is really asking.
+    """
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.flag = os.path.join(self.directory, "move-seen")
+        self.ctl = load_ctl()
+        self.ctl.REACHED_FLAG = self.flag
+        self.daemon_flag = bd.REACHED_FLAG
+        bd.REACHED_FLAG = self.flag
+
+    def tearDown(self):
+        bd.REACHED_FLAG = self.daemon_flag
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def daemon(self):
+        daemon = bd.Daemon.__new__(bd.Daemon)
+        daemon.hypr = FakeCompositor("dwindle", "window")
+        daemon.move_style = "layout"
+        daemon.battle = None
+        daemon.quiet_until = 0.0
+        daemon.last_collision = None
+        daemon.last_collision_at = 0.0
+        daemon.enabled = lambda: False      # no roll; only the note matters
+        return daemon
+
+    def test_a_fresh_machine_has_not_been_reached(self):
+        self.assertFalse(self.ctl.reached())
+        self.assertFalse(bd.Daemon.reached())
+
+    def test_the_cli_writes_it_down(self):
+        self.ctl.note_reached()
+        self.assertTrue(self.ctl.reached())
+        self.assertTrue(bd.Daemon.reached())
+
+    def test_the_daemon_and_the_cli_agree_on_where_it_lives(self):
+        # Two processes, one fact. The CLI is the keybind and writes it with
+        # the shell down; the daemon reads it to answer the panel.
+        fresh, daemon = load_ctl(), load_daemon()
+        self.assertTrue(fresh.REACHED_FLAG.endswith("hyprscroll2d/move-seen"))
+        self.assertEqual(fresh.REACHED_FLAG, daemon.REACHED_FLAG)
+
+    def test_noting_it_twice_is_not_an_error(self):
+        self.ctl.note_reached()
+        self.ctl.note_reached()
+        bd.Daemon.note_reached()
+        self.assertTrue(self.ctl.reached())
+
+    def test_a_note_that_cannot_be_written_costs_only_the_note(self):
+        # A move key that refused to move a window because a flag file could
+        # not be written would be far the worse bug.
+        self.ctl.REACHED_FLAG = "/nonexistent/nowhere/move-seen"
+        self.ctl.note_reached()                 # must not raise
+        self.assertFalse(self.ctl.reached())
+
+    def test_a_move_marks_it_even_when_nothing_collided(self):
+        # A bound key that has not landed on anybody yet is still a bound
+        # key, so the hint goes on the first press and not the first fight.
+        daemon = self.daemon()
+        daemon.move("left", 100.0)
+        self.assertTrue(bd.Daemon.reached())
+
+    def test_a_direction_that_is_not_one_marks_nothing(self):
+        daemon = self.daemon()
+        self.assertFalse(daemon.move("sideways", 100.0))
+        self.assertFalse(bd.Daemon.reached())
+
+    def test_a_collision_announced_by_a_plugin_marks_it_too(self):
+        # Somebody with the layout or the gamepad plugin never binds a key:
+        # their collisions arrive as events, and they are just as wired up.
+        daemon = self.daemon()
+        daemon.on_collision("0xaaa,0xbbb,left", 100.0, "layout")
+        self.assertTrue(bd.Daemon.reached())
+
+    def test_a_payload_that_is_not_a_collision_marks_nothing(self):
+        daemon = self.daemon()
+        daemon.on_collision("nonsense", 100.0, "layout")
+        self.assertFalse(bd.Daemon.reached())
+
+    def test_the_switch_never_touches_it(self):
+        # Turning battles off is not unbinding a key, and somebody who comes
+        # back a month later must not be told to set up what they set up.
+        self.ctl.note_reached()
+        self.ctl.DISABLED_FLAG = os.path.join(self.directory, "battles-disabled")
+        self.ctl.set_enabled(False)
+        self.ctl.set_enabled(True)
+        self.assertTrue(self.ctl.reached())
+
+    def test_the_announcing_layout_is_matched_whole_and_exactly(self):
+        # The hint is wrong on Demon Slayer's Hyprscroll2D: that layout posts
+        # its own collisions, so nothing has to be bound. It is the only
+        # member of the scrolling family that does, and it is matched as a
+        # whole name - the gamepad plugin's id ends in `hyprscroll2d-gamepad-
+        # support`, and a substring test would take it for the layout.
+        self.assertEqual(moves.ANNOUNCES, "hyprscroll2d")
+        self.assertIn(moves.ANNOUNCES, moves.SCROLLING)
+        for other in ("scroller", "scrolling", "hyprscrolling", "dwindle",
+                      "master", "hyprscroll2d-gamepad-support", ""):
+            self.assertNotEqual(other, moves.ANNOUNCES)
+
+    def test_the_layout_is_read_off_the_compositor_and_not_the_disk(self):
+        # The whole of how a neighbouring plugin is ever detected: it names
+        # itself to Hyprland, and Hyprland is asked. Nothing looks in
+        # ~/.config/omarchy/plugins, which would be linking against it.
+        self.assertEqual(moves.layout_name({"str": "lua:hyprscroll2d"}),
+                         moves.ANNOUNCES)
+        for name, source in (("hyprbattles-ctl", "bin"), ("battles", "bin")):
+            with open(os.path.join(ROOT, source, name)) as handle:
+                body = handle.read()
+            self.assertNotIn("omarchy/plugins", body, name)
+            self.assertNotIn("me.schafman.omarchy.plugin.hyprscroll2d\"", body)
+
+    def test_the_roster_carries_the_answer_to_the_panel(self):
+        # The panel draws the hint off this one key, and a missing key must
+        # read as "reached" rather than nagging everybody on a stale reply.
+        for name, wanted in ((os.path.join("bin", "hyprbattles-ctl"),
+                              '"reached": reached()'),
+                             (os.path.join("bin", "battles"),
+                              '"reached": self.reached()'),
+                             (os.path.join("bin", "hyprbattles-ctl"),
+                              '"layoutAnnounces": layout == moves.ANNOUNCES'),
+                             (os.path.join("bin", "battles"),
+                              '"layoutAnnounces": self.layout() == moves.ANNOUNCES'),
+                             ("Roster.qml", "parsed.reached !== false"),
+                             ("Roster.qml", "parsed.layoutAnnounces === true"),
+                             ("Roster.qml", "!root.reached"),
+                             ("Roster.qml", "!root.layoutAnnounces")):
+            with open(os.path.join(ROOT, name)) as handle:
+                self.assertIn(wanted, handle.read(), name)
 
 
 class TheMenuRow(unittest.TestCase):

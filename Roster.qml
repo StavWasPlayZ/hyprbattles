@@ -50,6 +50,11 @@ Panel {
 
     readonly property color foreground: bar ? bar.foreground : Color.foreground
     readonly property color dim: Qt.darker(foreground, 1.55)
+    // The HP bar's amber, which is the one colour in this game that already
+    // means "not wrong yet, but look at it". Hardcoded for the same reason
+    // the green and the red are: a caution that changed colour with the
+    // theme would be a caution somewhere and a decoration somewhere else.
+    readonly property color caution: "#d2a03c"
     readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
     // The same eight accents the battle screen uses. A type has to mean the
@@ -187,6 +192,18 @@ Panel {
     // actually listed, measured rather than guessed. See `badgeSizer`.
     readonly property real badgeTextWidth: badgeSizer.textWidth
     property bool battlesOn: true
+    // Whether a move has ever reached the plugin. Starts true so that a
+    // panel opened before the first answer arrives says nothing: the hint is
+    // for somebody who has installed this and pressed a key, and flashing it
+    // at everybody for one frame on every open would make it noise.
+    property bool reached: true
+    // Whether the layout in use announces its own collisions. Demon Slayer's
+    // Hyprscroll2D posts one on every swap, so on it a move key needs no
+    // routing at all and the hint below would be telling somebody to fix
+    // something that already works. Nothing is looked for on disk to know
+    // this - the layout names itself through Hyprland's own socket, the one
+    // channel this plugin ever reaches a neighbour through.
+    property bool layoutAnnounces: false
     property string selected: ""
     property string note: ""
     property bool loading: false
@@ -478,6 +495,8 @@ Panel {
         root.sleepingRows = parsed.sleeping || []
         root.shelves = parsed.pantry || []
         root.battlesOn = parsed.enabled !== false
+        root.reached = parsed.reached !== false
+        root.layoutAnnounces = parsed.layoutAnnounces === true
         if (root.selected === "" && root.rows.length > 0)
             root.selected = String(root.rows[0].address)
         // The creature being fed has closed: there is nothing to feed, so
@@ -1461,6 +1480,63 @@ Panel {
                         foreground: root.foreground
                         fontFamily: root.fontFamily
                         onClicked: root.flip()
+                    }
+
+                    // The one thing a fresh install has to be told, and the
+                    // only thing this panel ever asks of anybody. Battles
+                    // trigger on a move made through `hyprbattles-ctl move`,
+                    // so until a key is routed there a window shoved into
+                    // another window does nothing and the plugin looks
+                    // broken rather than unconfigured. It cannot be read
+                    // off the compositor: this Hyprland is configured in Lua,
+                    // so every bind it lists comes back as one opaque Lua
+                    // callback number and what a key actually runs is not in
+                    // the answer. What can be known is whether a move has
+                    // ever arrived, which is the question anyway - the line
+                    // goes the moment one does, by either trigger path, and
+                    // never comes back.
+                    Rectangle {
+                        // Boxed in the amber, because this is the one thing
+                        // on the panel that is not a reading: everything else
+                        // here reports the machine, and this asks something
+                        // of you. A caption in the same grey as the rest of
+                        // the list would have been read as another reading
+                        // and skipped, which for the one line somebody needs
+                        // on their first day is the whole of the failure.
+                        visible: root.view === "roster" && !root.reached
+                                 && !root.layoutAnnounces
+                        width: parent.width
+                        height: visible ? hint.implicitHeight
+                                          + Style.spacing.md * 2 : 0
+                        radius: Style.cornerRadius
+                        // A wash rather than a fill: the panel's own surface
+                        // still has to read as the surface underneath it, and
+                        // a solid amber plate on a narrow bar is a klaxon for
+                        // something that is only a setup step.
+                        color: root.alpha(root.caution, 0.12)
+                        border.width: Math.max(1, Style.space(1))
+                        border.color: root.alpha(root.caution, 0.45)
+
+                        Text {
+                            textFormat: Text.PlainText
+                            id: hint
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: Style.spacing.md
+                            anchors.rightMargin: Style.spacing.md
+                            wrapMode: Text.WordWrap
+                            text: "No move key reaches battles yet, so "
+                                  + "nothing can collide. Route the keys you "
+                                  + "already move windows with through the "
+                                  + "plugin - the README does it in two lines."
+                            // Full strength inside the box: the box is doing
+                            // the work of standing out, and dim text in a
+                            // lit frame reads as something switched off.
+                            color: root.foreground
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                        }
                     }
 
                     // The ways out of the list, at the top where they can be
