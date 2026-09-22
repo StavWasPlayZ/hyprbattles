@@ -285,9 +285,15 @@ class PadLease:
             return events
         while True:
             try:
-                data, _ = self.socket.recvfrom(4096)
+                data, sender = self.socket.recvfrom(4096)
             except (BlockingIOError, OSError):
                 return events
+            # This socket has no name on disk and so no permission bits:
+            # anything on the machine can find it in /proc/net/unix and
+            # post to it. The pad daemon answers from its own bound path,
+            # so only that path gets to press buttons here.
+            if sender != self.path:
+                continue
             try:
                 events.append(json.loads(data.decode(errors="replace")))
             except ValueError:
@@ -1257,8 +1263,14 @@ def already_running():
             probe.bind("")          # abstract autobind, so a reply can land
             probe.settimeout(0.4)
             probe.sendto(b"status", SOCKET_PATH)
-            probe.recv(4096)
-        return True
+            # Only the daemon's own bound path counts as an answer: the
+            # probe is an abstract socket anyone local can post to.
+            deadline = time.monotonic() + 0.4
+            while time.monotonic() < deadline:
+                _, sender = probe.recvfrom(4096)
+                if sender == SOCKET_PATH:
+                    return True
+        return False
     except OSError:
         return False
 

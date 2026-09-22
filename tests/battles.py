@@ -21,8 +21,10 @@ import os
 import random
 import re
 import shutil
+import socket
 import sys
 import tempfile
+import threading
 import unittest
 import wave
 
@@ -1426,6 +1428,30 @@ class WithoutTheGamepadPlugin(unittest.TestCase):
         lease = bd.PadLease(path="/nonexistent/gamepad.sock")
         self.assertEqual(lease.read(), [])
 
+    def test_only_the_pad_daemon_gets_to_press_buttons(self):
+        # The lease's socket is an abstract one: no name on disk, no
+        # permission bits, and anything local can find it in /proc/net/unix.
+        # A datagram from anywhere but the pad daemon's own path is dropped
+        # before it is parsed, or a stranger could play the fight.
+        directory = tempfile.mkdtemp()
+        try:
+            path = os.path.join(directory, "gamepad.sock")
+            lease = bd.PadLease(path=path)
+            self.assertIsNotNone(lease.open())
+            target = lease.socket.getsockname()
+            press = json.dumps({"event": "button", "button": "a"}).encode()
+            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as stranger:
+                stranger.bind("")
+                stranger.sendto(press, target)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as daemon:
+                daemon.bind(path)
+                daemon.sendto(press, target)
+            self.assertEqual(lease.read(),
+                             [{"event": "button", "button": "a"}])
+            lease.close()
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+
     def test_the_keyboard_covers_every_battle_control(self):
         # Anything the controller can do, a keyboard has to be able to do, or
         # a battle a keyboard started could not be finished.
@@ -1460,6 +1486,30 @@ class TheMenuRow(unittest.TestCase):
 
     def test_absent_flag_means_on(self):
         self.assertTrue(self.ctl.enabled())
+
+    def test_only_the_daemon_s_answer_is_an_answer(self):
+        # The CLI listens for the reply on an abstract socket, which anything
+        # local can post to. A stranger who answers first must not be taken
+        # for the daemon: its reply is skipped and the real one read.
+        self.ctl.SOCKET_PATH = os.path.join(self.directory, "battle.sock")
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        server.bind(self.ctl.SOCKET_PATH)
+        server.settimeout(2.0)
+
+        def daemon():
+            _, client = server.recvfrom(4096)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as liar:
+                liar.bind("")
+                liar.sendto(b'{"battle": "spoofed"}', client)
+            server.sendto(b'{"battle": null}', client)
+
+        worker = threading.Thread(target=daemon)
+        worker.start()
+        try:
+            self.assertEqual(self.ctl.ask("status"), {"battle": None})
+        finally:
+            worker.join(2.0)
+            server.close()
 
     def test_off_then_on_round_trips(self):
         self.assertTrue(self.ctl.set_enabled(False))
@@ -3217,6 +3267,22 @@ class TheRoster(unittest.TestCase):
         # And the only two things it is allowed to run.
         for command in re.findall(r'controlCommand, "([a-z]+)"', source):
             self.assertIn(command, ("roster", "feed", "teach", "toggle"))
+
+    def test_the_panel_draws_every_string_as_plain_text(self):
+        # A window title is whatever the window says it is - a web page's
+        # document.title, a terminal's escape sequence - and it reaches the
+        # panel unchanged. QtQuick's Text defaults to AutoText, which turns
+        # into an HTML engine the moment a title starts with a tag, and an
+        # <img src="https://..."> in one would have the shell fetch it. So
+        # every Text here says PlainText, not just the ones showing titles
+        # today: the next one added should not have to know why.
+        with open(os.path.join(ROOT, "Roster.qml")) as handle:
+            lines = handle.read().splitlines()
+        for number, line in enumerate(lines, 1):
+            if re.match(r"\s*Text \{\s*$", line):
+                block = "\n".join(lines[number:number + 3])
+                self.assertIn("textFormat: Text.PlainText", block,
+                              "Roster.qml:%d" % number)
 
 
 class Evolving(unittest.TestCase):

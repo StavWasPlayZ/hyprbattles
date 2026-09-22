@@ -157,6 +157,14 @@ Two trigger paths, both ending in: switch checked → 25% roll → 6s cooldown.
 - **An evolution holds nothing and moves nothing** - no pad, no bar, no
   window - and the record is written *before* the animation, so skipping it
   costs only the picture (`Evolving`).
+- **Every `Text` in `Roster.qml` is `PlainText`, and only a bound path
+  gets a reply.** A window title is whatever the window says (a page's
+  `document.title`, a terminal escape), and QtQuick's `Text` defaults to
+  AutoText, which turns into an HTML engine at the first tag - an `<img>`
+  would have the shell fetch it. The reply-side sockets (`PadLease`,
+  `ask()`, `already_running()`) are abstract, so anything local can post
+  to them; a datagram from anywhere but the daemon's own bound path is
+  dropped unread.
 - **The bar icon is never the urgent colour.** On is the bar's own colour, off
   is grey, and the red dot appears only when a creature is one meal on the
   shelves away from evolving - and never while battles are off.

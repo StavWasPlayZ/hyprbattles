@@ -746,6 +746,7 @@ Panel {
         }
 
         Text {
+            textFormat: Text.PlainText
             id: doorLabel
             anchors.left: door.chevron ? parent.left : undefined
             anchors.leftMargin: Style.spacing.md
@@ -758,6 +759,7 @@ Panel {
         }
 
         Text {
+            textFormat: Text.PlainText
             visible: door.chevron
             anchors.right: parent.right
             anchors.rightMargin: Style.spacing.md
@@ -859,6 +861,7 @@ Panel {
                         color: creature.tint
 
                         Text {
+                            textFormat: Text.PlainText
                             id: typeLabel
                             anchors.centerIn: parent
                             text: String(creature.row.type || "")
@@ -909,6 +912,7 @@ Panel {
                         }
 
                         Text {
+                            textFormat: Text.PlainText
                             id: markLetter
                             anchors.centerIn: parent
                             visible: !markImage.visible && text !== ""
@@ -920,6 +924,7 @@ Panel {
                     }
 
                     Text {
+                        textFormat: Text.PlainText
                         anchors.verticalCenter: parent.verticalCenter
                         text: String(creature.row.name || "")
                         color: root.foreground
@@ -932,6 +937,7 @@ Panel {
                     // two creatures: everything on this card but the count
                     // is the same number for both of them.
                     Text {
+                        textFormat: Text.PlainText
                         anchors.verticalCenter: parent.verticalCenter
                         visible: Number(creature.row.count || 1) > 1
                         text: "\u00d7" + Number(creature.row.count || 1)
@@ -942,6 +948,7 @@ Panel {
                     }
 
                     Text {
+                        textFormat: Text.PlainText
                         anchors.verticalCenter: parent.verticalCenter
                         // Stars are the stage: one per
                         // evolution it has been through,
@@ -955,6 +962,7 @@ Panel {
                     // Omarchy's own suspend mark, because a shut window is
                     // asleep in exactly the sense that menu row means.
                     Text {
+                        textFormat: Text.PlainText
                         anchors.verticalCenter: parent.verticalCenter
                         visible: !!creature.row.sleeping
                         text: "󰒲"
@@ -965,6 +973,7 @@ Panel {
                 }
 
                 Text {
+                    textFormat: Text.PlainText
                     width: parent.width
                     elide: Text.ElideRight
                     text: "LV " + Number(creature.row.level || 0)
@@ -1012,6 +1021,7 @@ Panel {
                 }
 
                 Text {
+                    textFormat: Text.PlainText
                     // The same line on a shut window, because the appetite is
                     // the same: what it cannot do is eat, and the faded card
                     // and the sleep mark are what say so.
@@ -1064,6 +1074,7 @@ Panel {
                 }
 
                 Text {
+                    textFormat: Text.PlainText
                     id: feedLabel
                     anchors.centerIn: parent
                     text: "󱁂  Feed"
@@ -1118,6 +1129,7 @@ Panel {
             onItemRemoved: badgeSizer.generation++
 
             Text {
+                textFormat: Text.PlainText
                 visible: false
                 text: String((modelData && modelData.type) || "")
                 // The badge's font, exactly, or the width measured is not
@@ -1250,6 +1262,7 @@ Panel {
                     }
 
                     Text {
+                        textFormat: Text.PlainText
                         id: backLabel
                         anchors.centerIn: parent
                         text: root.view === "moves" && !!root.chosen
@@ -1425,6 +1438,7 @@ Panel {
                     // ------------------------------------------ the roster
 
                     Text {
+                        textFormat: Text.PlainText
                         visible: root.view === "sleeping"
                                  && root.sleepingRows.length === 0
                         width: parent.width
@@ -1438,6 +1452,7 @@ Panel {
                     }
 
                     Text {
+                        textFormat: Text.PlainText
                         visible: root.view === "best" && root.bestRows.length === 0
                         width: parent.width
                         text: root.loading ? "Counting windows..." : "No windows yet."
@@ -1447,6 +1462,7 @@ Panel {
                     }
 
                     Text {
+                        textFormat: Text.PlainText
                         visible: root.view === "roster" && root.rows.length === 0
                         width: parent.width
                         text: root.loading ? "Counting windows..." : "No windows open."
@@ -1512,6 +1528,7 @@ Panel {
                                     spacing: Style.spacing.xxs
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         width: parent.width
                                         elide: Text.ElideRight
                                         text: String(move.modelData.name || "")
@@ -1521,6 +1538,7 @@ Panel {
                                     }
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         width: parent.width
                                         text: String(move.modelData.type || "")
                                               + " - power " + Number(move.modelData.power || 0)
@@ -1578,6 +1596,7 @@ Panel {
                                     spacing: Style.spacing.xxs
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         width: parent.width
                                         elide: Text.ElideRight
                                         text: String(stat.modelData.name)
@@ -1587,6 +1606,7 @@ Panel {
                                     }
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         width: parent.width
                                         elide: Text.ElideRight
                                         text: String(stat.modelData.value)
@@ -1659,6 +1679,7 @@ Panel {
                                     spacing: Style.spacing.xxs
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         width: parent.width
                                         elide: Text.ElideRight
                                         text: String(known.modelData.name || "")
@@ -1668,6 +1689,7 @@ Panel {
                                     }
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         width: parent.width
                                         elide: Text.ElideRight
                                         text: known.carried
@@ -1751,6 +1773,7 @@ Panel {
                                         spacing: Style.spacing.sm
 
                                         Text {
+                                            textFormat: Text.PlainText
                                             id: shelfName
                                             width: parent.width - shelfWorth.implicitWidth
                                                    - Style.spacing.sm
@@ -1762,6 +1785,7 @@ Panel {
                                         }
 
                                         Text {
+                                            textFormat: Text.PlainText
                                             id: shelfWorth
                                             anchors.baseline: shelfName.baseline
                                             text: "+" + Number(shelf.modelData.nourish || 0)
@@ -1772,6 +1796,7 @@ Panel {
                                     }
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         width: parent.width
                                         elide: Text.ElideRight
                                         text: Number(shelf.modelData.servings || 0)
@@ -1845,6 +1870,7 @@ Panel {
                 }
 
                 Text {
+                    textFormat: Text.PlainText
                     id: feedBarLabel
                     anchors.centerIn: parent
                     text: {
@@ -1898,6 +1924,7 @@ Panel {
                 color: "transparent"
 
                 Text {
+                    textFormat: Text.PlainText
                     id: tipText
                     anchors.left: parent.left
                     anchors.right: parent.right

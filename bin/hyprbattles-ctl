@@ -76,6 +76,7 @@ import json
 import os
 import socket
 import sys
+import time
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PLUGIN_ROOT, "lib"))
@@ -197,7 +198,15 @@ def ask(message):
         # which passed 8 KiB long ago: a short buffer here truncated the
         # datagram, the JSON failed to parse and every read quietly fell back
         # to doing the work again locally.
-        return json.loads(client.recv(1 << 20).decode())
+        # And only the daemon's reply is a reply: the socket bound above has
+        # no name on disk and no permission bits, so anything local could
+        # post to it. The daemon answers from its own bound path.
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            data, sender = client.recvfrom(1 << 20)
+            if sender == SOCKET_PATH:
+                return json.loads(data.decode())
+        raise socket.timeout("no reply from the daemon")
 
 
 def larder():
