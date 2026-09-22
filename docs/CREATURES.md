@@ -345,7 +345,11 @@ share the first, because both are lists of windows. **All food** has the row
 under them to itself, because it is about the machine.
 
 **Best windows** lists every creature, open or asleep, strongest first, with
-its record next to its experience. A switch at the top picks the order.
+its record next to its experience - the wins in the HP bar's green and the
+losses in its red, the same two colours the window's own page gives WINS and
+LOSSES. `11W 9L` in one grey run is two numbers you have to take apart
+before either says anything, and on the one screen that exists to rank
+things they are the point. A switch at the top picks the order.
 **By experience** sorts on experience alone. Level and stage are both read
 off experience, so sorting on stage first would change nothing; ties go to
 the better win rate. **By win rate** sorts on `(wins + 1) / (wins + losses +

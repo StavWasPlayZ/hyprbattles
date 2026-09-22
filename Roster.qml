@@ -1035,19 +1035,40 @@ Panel {
                         font.pixelSize: Style.font.caption
                     }
 
-                    Text {
-                        textFormat: Text.PlainText
+                    // The ranked list shows what it is ranked by: the record
+                    // sits next to the experience it breaks ties with, and
+                    // the other way round. Its two halves are the HP bar's
+                    // own green and red - the same two the window's page
+                    // gives WINS and LOSSES - because "11W 9L" in one grey
+                    // run is two numbers a reader has to take apart before
+                    // either of them says anything, and on the one screen
+                    // that is a ranking they are the point. Two Texts for
+                    // the same reason the experience is its own: the panel
+                    // colours a word by splitting the line, never by markup.
+                    Row {
                         id: record
-                        // The ranked list shows what it is ranked by: the
-                        // record sits next to the experience it breaks
-                        // ties with, and the other way round.
-                        text: root.view === "best" && creature.interactive
-                            ? "   " + Number(creature.row.wins || 0) + "W "
-                              + Number(creature.row.losses || 0) + "L"
-                            : ""
-                        color: root.dim
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
+                        readonly property bool ranked:
+                            root.view === "best" && creature.interactive
+
+                        Text {
+                            textFormat: Text.PlainText
+                            text: record.ranked
+                                ? "   " + Number(creature.row.wins || 0) + "W"
+                                : ""
+                            color: "#55b364"
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                        }
+
+                        Text {
+                            textFormat: Text.PlainText
+                            text: record.ranked
+                                ? " " + Number(creature.row.losses || 0) + "L"
+                                : ""
+                            color: "#cc4b4b"
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                        }
                     }
                 }
 
