@@ -344,17 +344,20 @@ XP_LOSS_PER_LEVEL = 1
 STAGE_LEVELS = (0, 12, 25)
 
 # What an evolved creature is called. The window keeps its own name - it is
-# still your terminal - and earns a word in front of it, drawn from what its
-# type is good at. Nothing here is borrowed from anybody's monsters.
+# still your terminal - and earns a word in front of it: what that kind of
+# window turns into when you keep feeding it, said the way its own users say
+# it. Short, because every letter of a title is a letter of the window's name
+# the 12-wide plate no longer has room for. Nothing here is borrowed from
+# anybody's monsters.
 STAGE_TITLES = {
-    "SHELL": ("", "SUPER", "ROOT"),
-    "AGENT": ("", "AUTO", "ORACLE"),
-    "CODE": ("", "SMART", "PRIME"),
-    "NET": ("", "FAST", "HYPER"),
-    "CHAT": ("", "LOUD", "OMNI"),
-    "MEDIA": ("", "RICH", "ULTRA"),
-    "GAME": ("", "PRO", "LEGEND"),
-    "GLASS": ("", "CLEAR", "CRYSTAL"),
+    "SHELL": ("", "SUDO", "ROOT"),
+    "AGENT": ("", "YOLO", "AGI"),
+    "CODE": ("", "JUNIOR", "SENIOR"),
+    "NET": ("", "BETA", "NIGHTLY"),
+    "CHAT": ("", "MOD", "ADMIN"),
+    "MEDIA": ("", "HDR", "4K"),
+    "GAME": ("", "NOVICE", "PRO"),
+    "GLASS": ("", "FROSTY", "OPAQUE"),
 }
 
 NAME_WIDTH = 12             # what the name plate can draw without clipping

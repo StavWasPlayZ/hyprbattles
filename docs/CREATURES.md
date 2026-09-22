@@ -101,9 +101,12 @@ the threshold and it happens, whether the level came from a meal or a win.
 Evolving does three things:
 
 - **A name.** The window keeps its own - it is still your terminal - and earns
-  a word in front of it, drawn from what its type is good at: `FOOT` becomes
-  `SUPER FOOT` and then `ROOT FOOT`, `FIREFOX` becomes `FAST FIREFOX` and then
-  `HYPER FIREFOX`. Nothing in that table is borrowed from anybody's monsters.
+  a word in front of it, for what that kind of window turns into when you keep
+  feeding it: `FOOT` becomes `SUDO FOOT` and then `ROOT FOOT`, `NVIM` becomes
+  `JUNIOR NVIM` and then `SENIOR NVIM`, and a Claude Code session goes `YOLO`
+  and then `AGI`. The words are short on purpose: the plate is twelve letters,
+  and every one a title takes is one the window's own name loses. Nothing in
+  that table is borrowed from anybody's monsters.
 - **Stats.** Three points of attack per stage, on top of what the level is
   already worth.
 - **Moves, which is the part worth having.** Each type has three moves listed
