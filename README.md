@@ -249,9 +249,7 @@ make audio      # regenerate the committed chiptune, the theme included
 ```
 
 [`docs/DEVELOPING.md`](docs/DEVELOPING.md) is the tour: the layers, every
-command, and the invariants the tests hold. It is under `docs/`, not at the
-root as a `CLAUDE.md`, because this directory is the installed plugin and a
-file a coding agent loads on its own would ship as part of it.
+command, and the invariants the tests hold.
 
 The rules are pure functions and a state machine with no I/O in them, so the
 type ring, the damage formula, the odds, the run chances, the menus and every
